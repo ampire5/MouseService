@@ -126,6 +126,10 @@ private let gesture: UInt16 = 0xC3
         rig = Rig()   // the provider now gives the new service's endpoint
         rig.service.frontmost(pid: getpid())
         old.shutDown()
+        await eventually("lost") { events.last == "owner false" }
+        // The restarted service announces itself, as the app does once it listens.
+        DistributedNotificationCenter.default().postNotificationName(MouseClient.serviceStarted, object: nil,
+                                                                     userInfo: nil, deliverImmediately: true)
         await eventually("new driver applied") { rig.driver.applied.last == MouseState(divert: [gesture]) }
         #expect(events == ["owner true", "button \(gesture) true", "button \(gesture) false", "owner false", "owner true"])
         rig.shutDown()
@@ -139,6 +143,21 @@ private let gesture: UInt16 = 0xC3
         #expect(!client.isAvailable)
         rig = Rig()
         NotificationCenter.default.post(name: NSApplication.didBecomeActiveNotification, object: nil)
+        await eventually("welcome") { client.isAvailable }
+        rig?.shutDown()
+    }
+
+    @Test func serviceStartAnnouncementReconnects() async {
+        // A service that went away (quit, or crashed and restarted by launchd) is not woken by its clients: the
+        // started service says so, and they come back then.
+        var rig: Rig?
+        let client = MouseClient(bundleID: "test.a", endpointProvider: { rig?.listener.endpoint })
+        client.start()
+        await eventually("settled") { !client.isConnecting }
+        #expect(!client.isAvailable)
+        rig = Rig()
+        DistributedNotificationCenter.default().postNotificationName(MouseClient.serviceStarted, object: nil,
+                                                                     userInfo: nil, deliverImmediately: true)
         await eventually("welcome") { client.isAvailable }
         rig?.shutDown()
     }

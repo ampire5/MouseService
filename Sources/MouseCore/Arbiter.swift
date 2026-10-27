@@ -194,6 +194,8 @@ public struct Arbiter: Sendable {
                 for cid in held.sorted() {
                     effects.append(.send(old, .button(cid: cid, pressed: false, time: lastTime)))
                 }
+                // Its side buttons are the system's again: nothing is heard for it any more.
+                effects.append(.send(old, .watching([])))
                 effects.append(.send(old, .owner(false)))
             }
             held = []

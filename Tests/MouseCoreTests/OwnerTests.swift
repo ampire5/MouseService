@@ -49,6 +49,7 @@ private let back: UInt16 = 0x53
     #expect(a.frontmost(pid: pid(2)) == [
         .send(id(1), .button(cid: back, pressed: false, time: 6)),
         .send(id(1), .button(cid: gesture, pressed: false, time: 6)),
+        .send(id(1), .watching([])),
         .send(id(1), .owner(false)),
         .apply(MouseState(divert: [gesture])),
         .send(id(2), .owner(true)),
@@ -110,6 +111,7 @@ private let back: UInt16 = 0x53
     _ = a.button(cid: gesture, pressed: true, time: 5)
     #expect(a.releaseAll() == [
         .send(id(1), .button(cid: gesture, pressed: false, time: 5)),
+        .send(id(1), .watching([])),
         .send(id(1), .owner(false)),
         .apply(.released),
     ])
@@ -140,4 +142,13 @@ private let back: UInt16 = 0x53
     _ = a.frontmost(pid: pid(1))
     #expect(a.thumbWheel(delta: 1, touching: true, phase: .began, time: 1)
         == [.send(id(1), .thumbWheel(delta: 1, touching: true, phase: .began, time: 1))])
+}
+
+@Test func formerOwnerHearsNothingIsWatched() {
+    // Its side buttons come from the system again: a filter that still believed them heard would drop them.
+    var a = arbiter([1: Want(watch: [back]), 2: .none])
+    _ = a.frontmost(pid: pid(1))
+    _ = a.watching([back])
+    let effects = a.frontmost(pid: pid(2))
+    #expect(effects.firstIndex(of: .send(id(1), .watching([]))).map { $0 < effects.firstIndex(of: .send(id(1), .owner(false)))! } == true)
 }

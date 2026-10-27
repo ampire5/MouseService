@@ -5,10 +5,14 @@ import XPC
 /// An app's connection to MouseService (core spec, "Contract v1"). The app states its whole wish (`want`) whenever it
 /// changes and hears the mouse through the callbacks, on the main actor. The client keeps the last wish and sends it
 /// again after every reconnect. When the service goes away it releases every control it reported held and says
-/// `onOwner(false)`, so no press is left hanging. Without a service (not installed, or refused) the app has no
-/// Logitech features; the client tries again on the app's next activation, never on a timer.
+/// `onOwner(false)`, so no press is left hanging, and waits: launchd restarts a crashed service, which announces
+/// itself (`serviceStarted`), and the client comes back then; a service the user quit stays quit. Without a service
+/// (not installed, refused or quit) the app has no Logitech features; the client tries again on the announcement or
+/// the app's next activation, never on a timer.
 @MainActor public final class MouseClient {
     public static let serviceName = "local.mouseservice.xpc"
+    /// Posted by the service (distributed) once it listens: clients without one connect again.
+    public static let serviceStarted = Notification.Name("local.mouseservice.started")
 
     /// Welcomed by a service now.
     public private(set) var isAvailable = false
@@ -40,6 +44,7 @@ import XPC
     private var sent: Want?
     private var held: Set<UInt16> = []
     private var activationObserver: NSObjectProtocol?
+    private var startedObserver: NSObjectProtocol?
 
     /// The installed service, by its Mach name.
     public convenience init(bundleID: String = Bundle.main.bundleIdentifier ?? "") {
@@ -63,10 +68,11 @@ import XPC
         if activationObserver == nil {
             activationObserver = NotificationCenter.default.addObserver(
                 forName: NSApplication.didBecomeActiveNotification, object: nil, queue: .main) { [weak self] _ in
-                MainActor.assumeIsolated {
-                    guard let self, self.connection == nil else { return }
-                    self.connect()
-                }
+                MainActor.assumeIsolated { self?.retry() }
+            }
+            startedObserver = DistributedNotificationCenter.default().addObserver(
+                forName: Self.serviceStarted, object: nil, queue: .main) { [weak self] _ in
+                MainActor.assumeIsolated { self?.retry() }
             }
         }
         connect()
@@ -75,7 +81,9 @@ import XPC
     /// Closes the connection: the service releases what the app held.
     public func stop() {
         if let activationObserver { NotificationCenter.default.removeObserver(activationObserver) }
+        if let startedObserver { DistributedNotificationCenter.default().removeObserver(startedObserver) }
         activationObserver = nil
+        startedObserver = nil
         guard let connection else { return }
         self.connection = nil
         xpc_connection_cancel(connection)
@@ -99,6 +107,12 @@ import XPC
     }
 
     // MARK: Private
+
+    /// Without a welcomed service: a new connection, or a hello on the one kept after the service went away.
+    private func retry() {
+        guard !isAvailable, !isConnecting else { return }
+        if connection == nil { connect() } else { hello() }
+    }
 
     private func connect() {
         guard connection == nil else { return }
@@ -135,7 +149,10 @@ import XPC
             lost()
             welcomed = reconnect   // still the same connection: an interruption may come before its end
             if object === XPC_ERROR_CONNECTION_INTERRUPTED {
-                hello()   // the service died; launchd starts it again for this message
+                // The service went away; the connection stays for the next hello. Sending one now would have
+                // launchd start a service the user quit: wait for its announcement or the next activation.
+                isConnecting = false
+                setAvailable(false)   // `welcomed` stays: an end that follows is a service gone, worth a reconnect
             } else {
                 connection = nil
                 isConnecting = false
@@ -160,6 +177,10 @@ import XPC
         case let .owner(owner):
             guard owner != isOwner else { return }
             isOwner = owner
+            if !owner, !watching.isEmpty {   // the service says so too; a stale set would drop the system's buttons
+                watching = []
+                onWatching?([])
+            }
             onOwner?(owner)
         case let .watching(cids):
             watching = cids

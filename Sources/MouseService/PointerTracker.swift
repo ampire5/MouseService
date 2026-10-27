@@ -4,13 +4,15 @@ import MouseCore
 /// The window under the pointer, for the clients' wheel areas (core spec, "Window under the pointer"). Active only
 /// while some client declared areas; then a global and a local monitor (listen only) see each move and scroll. While
 /// the point stays in the cached window frame only the point is reported; leaving it asks the window server which
-/// window is there now. Inactive, there are no monitors and nothing runs.
+/// window is there now, and so do the end of a drag (the window may have moved with the pointer, or resized), a Space
+/// change and another app in front. Inactive, there are no monitors and nothing runs.
 @MainActor final class PointerTracker {
     private let onChange: (PointerPlace?) -> Void
     private var monitors: [Any] = []
     /// The window under the pointer: its number, owner and frame in AppKit screen coordinates.
     private var cached: (window: Int, pid: pid_t, frame: CGRect)?
     private var reported: PointerPlace?
+    private var spaceObserver: NSObjectProtocol?
 
     init(onChange: @escaping (PointerPlace?) -> Void) {
         self.onChange = onChange
@@ -21,24 +23,33 @@ import MouseCore
         guard on else {
             monitors.forEach(NSEvent.removeMonitor)
             monitors = []
+            if let spaceObserver { NSWorkspace.shared.notificationCenter.removeObserver(spaceObserver) }
+            spaceObserver = nil
             cached = nil
             reported = nil
             return
         }
         let mask: NSEvent.EventTypeMask = [.mouseMoved, .leftMouseDragged, .rightMouseDragged, .otherMouseDragged,
-                                           .scrollWheel]
-        let global = NSEvent.addGlobalMonitorForEvents(matching: mask) { [weak self] _ in
-            MainActor.assumeIsolated { self?.check() }
+                                           .scrollWheel, .leftMouseUp]
+        let global = NSEvent.addGlobalMonitorForEvents(matching: mask) { [weak self] event in
+            let ended = event.type == .leftMouseUp
+            MainActor.assumeIsolated { ended ? self?.invalidate() : self?.check() }
         }
         let local = NSEvent.addLocalMonitorForEvents(matching: mask) { [weak self] event in
-            MainActor.assumeIsolated { self?.check() }
+            let ended = event.type == .leftMouseUp
+            MainActor.assumeIsolated { ended ? self?.invalidate() : self?.check() }
             return event
         }
         monitors = [global, local].compactMap { $0 }
+        spaceObserver = NSWorkspace.shared.notificationCenter.addObserver(
+            forName: NSWorkspace.activeSpaceDidChangeNotification, object: nil, queue: .main) { [weak self] _ in
+            MainActor.assumeIsolated { self?.invalidate() }
+        }
         check()
     }
 
-    /// Another app came in front: its window may now be under a pointer that did not move.
+    /// Another app came in front, a drag ended or the Space changed: another window, or this one moved, may now be
+    /// under a pointer that did not leave the cached frame.
     func invalidate() {
         cached = nil
         if !monitors.isEmpty { check() }

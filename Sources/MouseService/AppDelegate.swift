@@ -89,6 +89,9 @@ import SettingsKit
             driver.setPanelForce(settings.panelForce)
         }
         listener = Listener(machService: MouseClient.serviceName, service: service)
+        // Clients that lost a service wait for this rather than wake it themselves (a quit service stays quit).
+        DistributedNotificationCenter.default().postNotificationName(MouseClient.serviceStarted, object: nil,
+                                                                     userInfo: nil, deliverImmediately: true)
         self.driver = driver
         self.service = service
         pointerTracker = tracker
