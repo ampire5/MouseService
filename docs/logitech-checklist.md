@@ -9,7 +9,8 @@ line says what to do and what must happen.
 2. Probe in front, hold the gesture button, `kill -9` the probe from another terminal: the gesture button works in
    Finder at once, and the service's menu lists no clients.
 3. Probe in front: `launchctl kill SIGKILL gui/$(id -u)/local.mouseservice`. The probe prints `owner false`, then
-   `available true` and `owner true` within 2 s.
+   `available true` and `owner true` once launchd has started the service again and it announced itself (launchd
+   waits up to 10 s between starts).
 4. `mouse-client-probe divert 0xC3 --wheel ratchet`: over the probe's window the wheel ratchets, over the desktop it
    has the mouse's own mode.
 5. Same probe: a press of the SmartShift button over its window prints `wheel … byButton true`.

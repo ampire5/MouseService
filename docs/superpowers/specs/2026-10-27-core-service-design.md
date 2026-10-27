@@ -38,7 +38,7 @@ each with its own spec, plan and implementation, in this order:
 | Contract levels | Two: full XPC for apps outside the sandbox (this spec), a declaration in `Info.plist` for sandboxed apps (sub-project 5). |
 | Who owns what | Buttons, haptics and thumb wheel: the frontmost app. Main wheel modes (Precision Scroll, ratchet): the window under the pointer, as scroll events themselves. |
 | Device settings | The service's only (haptic strength, panel force). A client asks for a one-off strong play, never writes the setting. |
-| Shape of the service | One menu-bar app that is also the agent: login item via `SMAppService`, a Mach service, settings window on SettingsKit. |
+| Shape of the service | One menu-bar app that is also the agent: a plain LaunchAgent in `~/Library/LaunchAgents` written by the app when opened by hand (`SMAppService` pins the binary's cdhash without a Team ID and refuses every rebuild), a Mach service, settings window on SettingsKit. |
 | Transport | Low-level XPC, dictionaries with a versioned schema (not `NSXPCConnection`): any language can be a client; new fields do not break old clients. A Swift client package hides the dictionaries. |
 
 ## Components

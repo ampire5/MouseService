@@ -7,7 +7,7 @@ import MouseServiceKit
 import ServiceManagement
 import SettingsKit
 
-/// MouseService runs as a launchd agent (`local.mouseservice.plist` in the bundle): launchd starts it at login,
+/// MouseService runs as a launchd agent (`~/Library/LaunchAgents/local.mouseservice.plist`): launchd starts it at login,
 /// restarts it after a crash and starts it on demand when a client connects to its Mach service. Opened by hand, the
 /// app only registers that agent (or wakes it) and quits.
 ///
@@ -97,34 +97,49 @@ import SettingsKit
         pointerTracker = tracker
     }
 
-    /// Opened by hand: the agent is the app that runs. A 0.1 login item goes; the agent is registered (or woken if it
-    /// already is), and this copy quits.
+    /// Opened by hand: the agent is the app that runs. This copy writes the agent's plist into
+    /// `~/Library/LaunchAgents` (this app's binary, the Mach service, run at load, kept alive after a crash), loads it
+    /// anew and quits. A plain LaunchAgent and not `SMAppService.agent`: without a Team ID a registration pins the
+    /// binary's cdhash, and launchd refuses every rebuilt binary (EX_CONFIG, OS_REASON_CODESIGNING, seen 2026-10-27).
+    /// 0.1's login item and an earlier SMAppService registration go first: the label must be one job's.
     private func registerAgentAndQuit() {
         if SMAppService.mainApp.status == .enabled { try? SMAppService.mainApp.unregister() }
-        let agent = SMAppService.agent(plistName: Self.agentPlist)
-        let wasEnabled = agent.status == .enabled
+        let registered = SMAppService.agent(plistName: Self.agentPlist)
+        if registered.status != .notRegistered { try? registered.unregister() }
+        let plist: [String: Any] = [
+            "Label": Self.label,
+            "ProgramArguments": [Bundle.main.executablePath ?? ""],
+            "MachServices": [MouseClient.serviceName: true],
+            "RunAtLoad": true,
+            "KeepAlive": ["SuccessfulExit": false],
+            "LimitLoadToSessionType": "Aqua",
+            "ProcessType": "Interactive",
+        ]
+        let url = FileManager.default.homeDirectoryForCurrentUser
+            .appendingPathComponent("Library/LaunchAgents/\(Self.agentPlist)")
         do {
-            try agent.register()
+            try FileManager.default.createDirectory(at: url.deletingLastPathComponent(), withIntermediateDirectories: true)
+            try PropertyListSerialization.data(fromPropertyList: plist, format: .xml, options: 0).write(to: url)
+            let domain = "gui/\(getuid())"
+            Self.launchctl(["bootout", "\(domain)/\(Self.label)"])   // a running agent or an old plist: fails quietly
+            let status = Self.launchctl(["bootstrap", domain, url.path])
+            if status != 0 { throw NSError(domain: "launchctl bootstrap", code: Int(status)) }
         } catch {
             let alert = NSAlert(error: error)
             alert.runModal()
         }
-        if agent.status == .requiresApproval {
-            let alert = NSAlert()
-            alert.messageText = "Allow MouseService in Login Items"
-            alert.informativeText = "MouseService runs in the background. Turn it on in System Settings › General › "
-                + "Login Items & Extensions; it starts at once."
-            alert.addButton(withTitle: "Open Login Items")
-            alert.addButton(withTitle: "Later")
-            if alert.runModal() == .alertFirstButtonReturn { SMAppService.openSystemSettingsLoginItems() }
-        } else if wasEnabled {
-            let kick = Process()
-            kick.executableURL = URL(fileURLWithPath: "/bin/launchctl")
-            kick.arguments = ["kickstart", "gui/\(getuid())/\(Self.label)"]
-            try? kick.run()
-            kick.waitUntilExit()
-        }
         NSApp.terminate(nil)
+    }
+
+    @discardableResult
+    private static func launchctl(_ arguments: [String]) -> Int32 {
+        let process = Process()
+        process.executableURL = URL(fileURLWithPath: "/bin/launchctl")
+        process.arguments = arguments
+        process.standardError = FileHandle.nullDevice
+        do { try process.run() } catch { return -1 }
+        process.waitUntilExit()
+        return process.terminationStatus
     }
 
     // MARK: Taps
