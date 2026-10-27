@@ -31,6 +31,8 @@ let package = Package(
             .product(name: "LogiHIDPP", package: "LogiHIDPP"),
             .product(name: "SettingsKit", package: "SettingsKit"),
         ]),
+        // A test client: takes buttons, declares wheel areas, prints events with their latency (docs/bench.md).
+        .executableTarget(name: "mouse-client-probe", dependencies: ["MouseClient", "MouseContract"]),
         .testTarget(name: "GestureCoreTests", dependencies: ["GestureCore"]),
         .testTarget(name: "PointerCoreTests", dependencies: ["PointerCore"], resources: [.copy("Fixtures")]),
         .testTarget(name: "MouseContractTests", dependencies: ["MouseContract"]),
