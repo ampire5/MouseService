@@ -9,8 +9,15 @@ rm -rf "$app"
 mkdir -p "$app/Contents/MacOS"
 cp "$(swift build -c release --show-bin-path)/MouseService" "$app/Contents/MacOS/MouseService"
 cp Resources/Info.plist "$app/Contents/Info.plist"
-# Ad hoc: the Accessibility permission is tied to the signature, so a new build must be allowed again.
-codesign --force --sign - "$app"
+# The Accessibility permission is tied to the signature's designated requirement. With the local self-signed identity
+# "Local Code Signing" (login keychain) that is the bundle ID and the certificate, the same for every build; ad hoc it
+# is the build's own hash, and every new build must be allowed again.
+if security find-identity -p codesigning | grep -q '"Local Code Signing"'; then
+    codesign --force --sign "Local Code Signing" "$app"
+else
+    echo "warning: no \"Local Code Signing\" identity: signed ad hoc, Accessibility must be allowed again" >&2
+    codesign --force --sign - "$app"
+fi
 echo "Built $app"
 if [[ "${1:-}" == "--install" ]]; then
     mkdir -p "$HOME/Applications"
