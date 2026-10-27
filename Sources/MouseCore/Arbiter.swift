@@ -30,6 +30,20 @@ public struct MouseState: Equatable, Sendable {
     public static let released = MouseState()
 }
 
+/// The window under the pointer: its number, its owner's pid and the point in its coordinates (origin at the
+/// bottom-left of its frame).
+public struct PointerPlace: Equatable, Sendable {
+    public var window: Int
+    public var pid: pid_t
+    public var point: CGPoint
+
+    public init(window: Int, pid: pid_t, point: CGPoint) {
+        self.window = window
+        self.pid = pid
+        self.point = point
+    }
+}
+
 public enum Effect: Equatable, Sendable {
     case send(ClientID, ServiceMessage)
     /// The whole new state, emitted only when it changed.
@@ -40,7 +54,8 @@ public enum Effect: Equatable, Sendable {
 /// Who owns the mouse and what it should be (core spec, "Arbitration and data flow"): pure, every input an event,
 /// every output an `Effect`. The owner of buttons, haptics and the thumb wheel is the frontmost app if it is a client;
 /// an owner change releases every control it holds before it is told, and the new owner is told after the mouse has
-/// its wishes.
+/// its wishes. The main wheel's mode is that of the window under the pointer, from its client's declared areas; the
+/// client under the pointer hears the wheel's state.
 public struct Arbiter: Sendable {
     struct Client: Sendable {
         let pid: pid_t
@@ -58,8 +73,30 @@ public struct Arbiter: Sendable {
     private var lastTime = 0.0
     private var watchingNow: Set<UInt16> = []
     public private(set) var wanted = MouseState.released
+    private var place: PointerPlace?
+    /// The client whose declared window is under the pointer: it hears the wheel's state.
+    private var wheelReceiver: ClientID?
+    /// The wheel's state as the mouse last reported it.
+    private var wheel: (highResolution: Bool, mode: WheelMode?) = (false, nil)
 
     public init() {}
+
+    /// Whether some client declared wheel areas: only then does the service follow the pointer.
+    public var followsPointer: Bool { clients.values.contains { !$0.want.wheel.isEmpty } }
+
+    /// The window under the pointer moved or changed; nil: no window, or none of a client.
+    public mutating func pointer(_ place: PointerPlace?) -> [Effect] {
+        guard place != self.place else { return [] }
+        self.place = place
+        return update()
+    }
+
+    /// The mouse reported its wheel: to the client under the pointer.
+    public mutating func wheelState(highResolution: Bool, mode: WheelMode?, byButton: Bool) -> [Effect] {
+        wheel = (highResolution, mode)
+        guard let wheelReceiver else { return [] }
+        return [.send(wheelReceiver, .wheel(highResolution: highResolution, mode: mode, byButton: byButton))]
+    }
 
     public mutating func connect(_ id: ClientID, pid: pid_t) -> [Effect] {
         clients[id] = Client(pid: pid)
@@ -118,7 +155,7 @@ public struct Arbiter: Sendable {
         return clients.filter { $0.value.pid == frontmostPID }.keys.min()
     }
 
-    /// The state from the owner's wish (and, below, the wheel's).
+    /// The state from the owner's wish and the wishes over the window under the pointer.
     func computeWanted() -> MouseState {
         var state = MouseState.released
         if let owner, let want = clients[owner]?.want {
@@ -126,7 +163,25 @@ public struct Arbiter: Sendable {
             state.watch = want.watch
             state.thumbWheel = want.thumbWheel
         }
+        let (_, entries) = wheelEntries()
+        state.mode = entries.lazy.compactMap(\.mode).first
+        state.highResolution = entries.lazy.compactMap(\.highResolution).first ?? false
         return state
+    }
+
+    /// The client whose window is under the pointer and its entries that cover the point, in its order. A rect holds
+    /// its min edges and not its max ones.
+    private func wheelEntries() -> (ClientID?, [WheelWish]) {
+        guard let place else { return (nil, []) }
+        let matches = clients.filter { $0.value.pid == place.pid && $0.value.want.wheel.contains { $0.window == place.window } }
+        guard let id = matches.keys.min(), let want = clients[id]?.want else { return (nil, []) }
+        let p = place.point
+        let entries = want.wheel.filter { wish in
+            wish.window == place.window && (wish.rects.map { rects in
+                rects.contains { p.x >= $0.minX && p.x < $0.maxX && p.y >= $0.minY && p.y < $0.maxY }
+            } ?? true)
+        }
+        return (id, entries)
     }
 
     /// The owner change in one step (core spec, rule 3), then the mouse's state if it changed.
@@ -152,6 +207,13 @@ public struct Arbiter: Sendable {
         if ownerChanged, let owner {
             effects.append(.send(owner, .owner(true)))
             effects.append(.send(owner, .watching(watchingNow)))
+        }
+        let receiver = wheelEntries().0
+        if receiver != wheelReceiver {
+            wheelReceiver = receiver
+            if let receiver {
+                effects.append(.send(receiver, .wheel(highResolution: wheel.highResolution, mode: wheel.mode, byButton: false)))
+            }
         }
         return effects
     }
