@@ -2,12 +2,15 @@ import AppKit
 import ApplicationServices
 import ServiceManagement
 
-/// The menu-bar item: gestures on or off, the Accessibility permission, launch at login, quit. The tap runs while
-/// gestures are on and the permission is granted; nothing else runs at rest.
+/// The menu-bar item: gestures on or off, the devices' pointer and scroll rules, the Accessibility permission, launch
+/// at login, quit. The gesture tap runs while gestures are on and the permission is granted, the scroll tap while the
+/// permission is granted; nothing else runs at rest.
 @MainActor final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     private let statusItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.squareLength)
     private let synth = TouchSynth()
     private var tap: SideButtonTap?
+    private let pointer = PointerDevices()
+    private var scrollTap: ScrollTap?
     private static let gesturesKey = "gesturesOn"
 
     private var gesturesOn: Bool {
@@ -30,11 +33,14 @@ import ServiceManagement
             let prompt = "AXTrustedCheckOptionPrompt"   // kAXTrustedCheckOptionPrompt, a global var Swift 6 refuses
             AXIsProcessTrustedWithOptions([prompt: true] as CFDictionary)
         }
+        pointer.start()
         updateTap()
     }
 
     func applicationWillTerminate(_ notification: Notification) {
         tap?.stop()
+        scrollTap?.stop()
+        pointer.restoreAll()
         CGAssociateMouseAndMouseCursorPosition(1)
     }
 
@@ -51,6 +57,10 @@ import ServiceManagement
         } else if !wanted, let tap {
             tap.stop()
             self.tap = nil
+        }
+        // The scroll rules need only the permission; gestures off leaves them on.
+        if scrollTap == nil, AXIsProcessTrusted(), let scroll = ScrollTap(rules: pointer.scrollRules), scroll.start() {
+            scrollTap = scroll
         }
         statusItem.button?.appearsDisabled = tap == nil
     }
@@ -77,6 +87,11 @@ import ServiceManagement
         if !AXIsProcessTrusted() {
             menu.addItem(item("Open Accessibility Settings…", #selector(openAccessibility)))
         }
+        menu.addItem(.separator())
+        menu.addItem(NSMenuItem(title: pointer.summary, action: nil, keyEquivalent: ""))
+        menu.addItem(item("Edit Devices Config…", #selector(editDevicesConfig)))
+        menu.addItem(item("Reload Devices Config", #selector(reloadDevicesConfig)))
+        menu.addItem(.separator())
         let login = item("Launch at Login", #selector(toggleLogin))
         login.state = SMAppService.mainApp.status == .enabled ? .on : .off
         menu.addItem(login)
@@ -94,6 +109,14 @@ import ServiceManagement
     @objc private func toggleGestures() {
         gesturesOn.toggle()
         updateTap()
+    }
+
+    @objc private func editDevicesConfig() {
+        NSWorkspace.shared.open(PointerDevices.configURL)
+    }
+
+    @objc private func reloadDevicesConfig() {
+        pointer.reload()
     }
 
     @objc private func openAccessibility() {

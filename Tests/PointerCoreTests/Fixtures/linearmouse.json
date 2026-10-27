@@ -1,0 +1,341 @@
+{
+  "$schema" : "https:\/\/schema.linearmouse.app\/0.13.0-beta.4",
+  "schemes" : [
+    {
+      "buttons" : {
+        "mappings" : [
+
+        ],
+        "universalBackForward" : false
+      },
+      "if" : {
+        "device" : {
+          "category" : "mouse",
+          "productID" : "0xc53f",
+          "productName" : "USB Receiver",
+          "vendorID" : "0x46d"
+        }
+      },
+      "pointer" : {
+        "acceleration" : 0.05,
+        "disableAcceleration" : false,
+        "speed" : 0.184
+      },
+      "scrolling" : {
+        "acceleration" : {
+          "vertical" : 1
+        },
+        "distance" : "auto",
+        "reverse" : {
+          "horizontal" : false,
+          "vertical" : true
+        },
+        "speed" : {
+          "vertical" : 0
+        }
+      }
+    },
+    {
+      "if" : {
+        "app" : "me.guillaumeb.MonitorControl",
+        "device" : {
+          "category" : "mouse",
+          "productID" : "0xc53f",
+          "productName" : "USB Receiver",
+          "vendorID" : "0x46d"
+        }
+      },
+      "scrolling" : {
+        "reverse" : {
+          "vertical" : false
+        }
+      }
+    },
+    {
+      "if" : {
+        "device" : {
+          "category" : "trackpad",
+          "productID" : "0x342",
+          "productName" : "Apple Internal Keyboard \/ Trackpad",
+          "vendorID" : "0x5ac"
+        }
+      },
+      "pointer" : {
+        "acceleration" : 0.875,
+        "disableAcceleration" : false,
+        "speed" : 0.0689655172413792768
+      },
+      "scrolling" : {
+        "reverse" : {
+          "vertical" : false
+        }
+      }
+    },
+    {
+      "if" : {
+        "device" : {
+          "category" : "mouse",
+          "productID" : "0xc077",
+          "productName" : "USB Optical Mouse",
+          "vendorID" : "0x46d"
+        }
+      },
+      "pointer" : {
+        "acceleration" : 0.0997,
+        "speed" : 0.184
+      },
+      "scrolling" : {
+        "reverse" : {
+          "vertical" : true
+        }
+      }
+    },
+    {
+      "buttons" : {
+        "universalBackForward" : false
+      },
+      "if" : {
+        "device" : {
+          "category" : "mouse",
+          "productID" : "0x7b2",
+          "productName" : "MicrosoftÆ 2.4GHz Transceiver v8.0",
+          "vendorID" : "0x45e"
+        }
+      },
+      "pointer" : {
+        "acceleration" : 0.09,
+        "disableAcceleration" : false,
+        "speed" : 0.3367
+      },
+      "scrolling" : {
+        "reverse" : {
+          "vertical" : true
+        }
+      }
+    },
+    {
+      "if" : {
+        "app" : "kontur.talk",
+        "device" : {
+          "category" : "mouse",
+          "productID" : "0x7b2",
+          "productName" : "MicrosoftÆ 2.4GHz Transceiver v8.0",
+          "vendorID" : "0x45e"
+        }
+      },
+      "pointer" : {
+        "speed" : 0.2626
+      }
+    },
+    {
+      "if" : {
+        "device" : {
+          "category" : "mouse",
+          "productID" : "0xc534",
+          "productName" : "USB Receiver",
+          "vendorID" : "0x46d"
+        }
+      },
+      "scrolling" : {
+        "reverse" : {
+          "vertical" : true
+        }
+      }
+    },
+    {
+      "if" : {
+        "device" : {
+          "category" : "mouse",
+          "productID" : "0xb034",
+          "productName" : "MX Master 3S",
+          "serialNumber" : "00000000",
+          "vendorID" : "0x46d"
+        }
+      },
+      "pointer" : {
+        "acceleration" : 0.1,
+        "speed" : 0.184
+      },
+      "scrolling" : {
+        "acceleration" : 1,
+        "distance" : "auto",
+        "reverse" : {
+          "vertical" : false
+        },
+        "speed" : 0
+      }
+    },
+    {
+      "buttons" : {
+        "universalBackForward" : false
+      },
+      "if" : {
+        "device" : {
+          "category" : "mouse",
+          "productID" : "0xc548",
+          "productName" : "USB Receiver",
+          "vendorID" : "0x46d"
+        }
+      },
+      "logitech" : {
+        "highResolutionWheel" : false
+      },
+      "pointer" : {
+        "acceleration" : 0.225,
+        "disableAcceleration" : false,
+        "speed" : 0.125
+      },
+      "scrolling" : {
+        "acceleration" : 1,
+        "distance" : "auto",
+        "modifiers" : {
+          "horizontal" : {
+            "command" : {
+              "type" : "preventDefault"
+            },
+            "control" : {
+              "type" : "preventDefault"
+            }
+          }
+        },
+        "reverse" : {
+          "horizontal" : false,
+          "vertical" : true
+        },
+        "smoothed" : {
+          "enabled" : false
+        },
+        "speed" : 0
+      }
+    },
+    {
+      "if" : {
+        "app" : "com.djhan.EdgeView-3",
+        "device" : {
+          "category" : "mouse",
+          "productID" : "0xc548",
+          "productName" : "USB Receiver",
+          "vendorID" : "0x46d"
+        }
+      },
+      "pointer" : {
+        "acceleration" : 1.5172,
+        "speed" : 0.066
+      }
+    },
+    {
+      "if" : {
+        "device" : {
+          "category" : "mouse",
+          "productID" : "0xd049",
+          "productName" : "Keychron M6 8K",
+          "vendorID" : "0x3434"
+        }
+      },
+      "scrolling" : {
+        "reverse" : {
+          "vertical" : true
+        }
+      }
+    },
+    {
+      "buttons" : {
+
+      },
+      "if" : {
+        "device" : {
+          "category" : "mouse",
+          "productID" : "0xd028",
+          "productName" : "Keychron Ultra-Link 8K",
+          "vendorID" : "0x3434"
+        }
+      },
+      "pointer" : {
+        "acceleration" : 0.18,
+        "disableAcceleration" : false,
+        "redirectsToScroll" : false,
+        "speed" : 0.15
+      },
+      "scrolling" : {
+        "acceleration" : {
+          "horizontal" : 1,
+          "vertical" : 1.49
+        },
+        "distance" : {
+          "vertical" : "auto"
+        },
+        "reverse" : false,
+        "smoothed" : {
+          "vertical" : {
+            "enabled" : false
+          }
+        },
+        "speed" : {
+          "horizontal" : 0,
+          "vertical" : 6.38
+        }
+      }
+    },
+    {
+      "if" : {
+        "app" : "com.colliderli.iina",
+        "device" : {
+          "category" : "mouse",
+          "productID" : "0xd028",
+          "productName" : "Keychron Ultra-Link 8K",
+          "vendorID" : "0x3434"
+        }
+      },
+      "scrolling" : {
+        "acceleration" : {
+          "vertical" : 1
+        },
+        "distance" : {
+          "vertical" : "auto"
+        },
+        "reverse" : false,
+        "speed" : {
+          "vertical" : 0
+        }
+      }
+    },
+    {
+      "if" : {
+        "app" : "com.movist.MovistPro",
+        "device" : {
+          "category" : "mouse",
+          "productID" : "0xd028",
+          "productName" : "Keychron Ultra-Link 8K",
+          "vendorID" : "0x3434"
+        }
+      },
+      "scrolling" : {
+        "reverse" : {
+          "horizontal" : false,
+          "vertical" : true
+        }
+      }
+    },
+    {
+      "if" : {
+        "app" : "com.djhan.EdgeView-3",
+        "device" : {
+          "category" : "trackpad",
+          "productID" : "0x265",
+          "productName" : "Magic Trackpad",
+          "serialNumber" : "00:00:00:00:00:00",
+          "vendorID" : "0x4c"
+        }
+      },
+      "pointer" : {
+        "acceleration" : 1.2795,
+        "speed" : 0.2659
+      },
+      "scrolling" : {
+        "acceleration" : {
+          "vertical" : 2.04
+        }
+      }
+    }
+  ]
+}
