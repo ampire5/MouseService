@@ -9,6 +9,9 @@ let package = Package(
         // What apps link: the client and the contract's types.
         .library(name: "MouseClient", targets: ["MouseClient", "MouseContract"]),
     ],
+    dependencies: [
+        .package(url: "https://github.com/ampire5/LogiHIDPP.git", from: "0.1.0"),
+    ],
     targets: [
         // What a press and a drag of the side buttons mean: pure, no AppKit, no events.
         .target(name: "GestureCore"),
@@ -22,7 +25,10 @@ let package = Package(
         .target(name: "MouseServiceKit", dependencies: ["MouseCore", "MouseContract"]),
         // The apps' side of the contract.
         .target(name: "MouseClient", dependencies: ["MouseContract"]),
-        .executableTarget(name: "MouseService", dependencies: ["GestureCore", "PointerCore"]),
+        .executableTarget(name: "MouseService", dependencies: [
+            "GestureCore", "PointerCore", "MouseServiceKit", "MouseCore", "MouseContract",
+            .product(name: "LogiHIDPP", package: "LogiHIDPP"),
+        ]),
         .testTarget(name: "GestureCoreTests", dependencies: ["GestureCore"]),
         .testTarget(name: "PointerCoreTests", dependencies: ["PointerCore"], resources: [.copy("Fixtures")]),
         .testTarget(name: "MouseContractTests", dependencies: ["MouseContract"]),
