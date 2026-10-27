@@ -107,7 +107,10 @@ final class SideButtonTap: @unchecked Sendable {
             case let .pageSwipe(button):
                 synth.postPageSwipe(button)
             case let .dockSwipe(swipe):
-                if swipe.phase == .began { updateScales() }
+                if swipe.phase == .began {
+                    updateScales()
+                    announceSwipe()
+                }
                 synth.post(swipe, repeatOn: repeats)
             case let .freezePointer(frozen):
                 guard frozen != pointerFrozen else { continue }
@@ -115,6 +118,17 @@ final class SideButtonTap: @unchecked Sendable {
                 CGAssociateMouseAndMouseCursorPosition(frozen ? 0 : 1)
             }
         }
+    }
+
+    /// Tells the apps that hear the back button from the mouse itself (FrameScrub and Loupe over HID++, past this tap)
+    /// that its press is a swipe now: they drop the press, else its release would be their click. Their own pointer
+    /// watch does not see the drag once Mission Control or App Exposé takes the pointer. The core service's contract
+    /// replaces this notification.
+    static let swipeBegan = Notification.Name("local.mouseservice.swipeBegan")
+
+    private func announceSwipe() {
+        DistributedNotificationCenter.default().postNotificationName(Self.swipeBegan, object: nil, userInfo: nil,
+                                                                     deliverImmediately: true)
     }
 
     /// Progress per point from the main display's size at the start of each swipe (Mac Mouse Fix's measure: one Space
