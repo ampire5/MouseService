@@ -120,10 +120,14 @@ final class ScrollTap: @unchecked Sendable {
 
     private func negate(_ event: CGEvent, _ hid: HIDEvent, _ delta: CGEventField, _ fixed: CGEventField,
                         _ point: CGEventField, _ hidField: UInt32) {
-        event.setIntegerValueField(delta, value: -event.getIntegerValueField(delta))
-        event.setDoubleValueField(fixed, value: -event.getDoubleValueField(fixed))
-        event.setDoubleValueField(point, value: -event.getDoubleValueField(point))
+        // The IOHIDEvent first: a write to it makes the CGEvent derive its fields from it anew (macOS 27, seen
+        // 2026-10-27: the fixed-point delta came back with its old sign and without the system's acceleration). The
+        // CGEvent's own values, read before, are written after it.
+        let values = (event.getIntegerValueField(delta), event.getDoubleValueField(fixed), event.getDoubleValueField(point))
         setFloat(hid, hidField, -getFloat(hid, hidField))
+        event.setIntegerValueField(delta, value: -values.0)
+        event.setDoubleValueField(fixed, value: -values.1)
+        event.setDoubleValueField(point, value: -values.2)
     }
 
     private static func modifiers(_ flags: CGEventFlags) -> ModifierSet {

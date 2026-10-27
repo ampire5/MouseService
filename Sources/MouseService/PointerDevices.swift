@@ -251,9 +251,11 @@ final class ScrollRules: Sendable {
         }
         // Truncated, as LinearMouse writes it: the same numbers in the device.
         func fixed(_ v: Double) -> CFTypeRef { NSNumber(value: Int32(clamping: Int(v * 65536))) }
+        // Written whenever a rule covers the device, as LinearMouse does: the system's default is 1 (linear scaling),
+        // and with it LinearMouse's accelerations make the pointer far slower (seen 2026-10-27).
         let linear = settings.disableAcceleration == true
         if device.original.linear != nil {
-            set("HIDUseLinearScalingMouseAcceleration", linear ? NSNumber(value: 1) : (device.original.linear ?? NSNumber(value: 0)))
+            set("HIDUseLinearScalingMouseAcceleration", NSNumber(value: linear ? 1 : 0))
         }
         if let speed = settings.speed {
             set("HIDPointerResolution", fixed(min(max(PointerMath.resolution(speed: speed), 10), 1995)))
