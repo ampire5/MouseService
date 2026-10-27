@@ -1,5 +1,5 @@
 {
-  "originHash" : "e91825fc8ff4334c72cc4ef99dd1b6c947b1c6663ba8e8150ee52ceffadb51c8",
+  "originHash" : "464b72a1094fe81391e7a43d72b309182a251a90b6a86f552c76a4d7ffbac807",
   "pins" : [
     {
       "identity" : "logihidpp",
@@ -8,6 +8,15 @@
       "state" : {
         "revision" : "0c6849480ac0ea46c0bf5e7727d9eb77b49c7ed0",
         "version" : "0.1.0"
+      }
+    },
+    {
+      "identity" : "settingskit",
+      "kind" : "remoteSourceControl",
+      "location" : "https://github.com/ampire5/SettingsKit.git",
+      "state" : {
+        "revision" : "33841e33b4eafa789620d76c214278f4617417bb",
+        "version" : "0.7.0"
       }
     }
   ],
