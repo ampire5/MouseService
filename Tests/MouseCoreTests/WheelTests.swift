@@ -92,3 +92,25 @@ private let area = CGRect(x: 0, y: 0, width: 100, height: 50)
     _ = a.pointer(place(1, window: 7))
     #expect(a.want(id(1), Want(wheel: [WheelWish(window: 7, mode: .ratchet)])).contains(.apply(MouseState(mode: .ratchet))))
 }
+
+@Test func smartShiftFollowsTheOwnersWheelWindow() {
+    // A client with wheel areas takes SmartShift to set the wheel itself: over its own window only, so elsewhere the
+    // button switches the mouse's own mode as usual.
+    let smartShift: UInt16 = 0xC4, gesture: UInt16 = 0xC3
+    var a = arbiter([1: Want(divert: [smartShift, gesture], wheel: [WheelWish(window: 7, mode: .freeSpin)]),
+                     2: .none])
+    _ = a.frontmost(pid: pid(1))
+    _ = a.pointer(place(1, window: 7))
+    #expect(a.wanted.divert == [smartShift, gesture])
+    _ = a.pointer(place(2, window: 9))
+    #expect(a.wanted.divert == [gesture])
+    _ = a.pointer(nil)
+    #expect(a.wanted.divert == [gesture])
+}
+
+@Test func smartShiftWithoutWheelAreasIsAPlainButton() {
+    let smartShift: UInt16 = 0xC4
+    var a = arbiter([1: Want(divert: [smartShift])])
+    _ = a.frontmost(pid: pid(1))
+    #expect(a.wanted.divert == [smartShift])
+}

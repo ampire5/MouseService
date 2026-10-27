@@ -62,6 +62,9 @@ public struct Arbiter: Sendable {
         var want = Want.none
     }
 
+    /// The SmartShift button's control ID (`LogiHIDPP.CID.smartShift`).
+    static let smartShift: UInt16 = 0xC4
+
     var clients: [ClientID: Client] = [:]
     private var frontmostPID: pid_t?
     /// "Release All": no owner until the next activation.
@@ -158,12 +161,15 @@ public struct Arbiter: Sendable {
     /// The state from the owner's wish and the wishes over the window under the pointer.
     func computeWanted() -> MouseState {
         var state = MouseState.released
+        let (receiver, entries) = wheelEntries()
         if let owner, let want = clients[owner]?.want {
             state.divert = want.divert
+            // SmartShift belongs to the wheel: a client that declares wheel areas takes it to set the wheel itself,
+            // over those areas' window only; elsewhere the button switches the mouse's own mode.
+            if !want.wheel.isEmpty, receiver != owner { state.divert.remove(Self.smartShift) }
             state.watch = want.watch
             state.thumbWheel = want.thumbWheel
         }
-        let (_, entries) = wheelEntries()
         state.mode = entries.lazy.compactMap(\.mode).first
         state.highResolution = entries.lazy.compactMap(\.highResolution).first ?? false
         return state

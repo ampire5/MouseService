@@ -117,7 +117,10 @@ Rules:
 4. **Applying by difference**: the service keeps the known state of the mouse and writes only what differs. Writes go
    through one queue per feature where the latest wish wins: ten app switches in a second give one or two writes. No
    300 ms re-apply and no per-app markers: there is one process.
-5. **SmartShift button**: the user's choice is adopted as `LogiHIDPP` does now and reported to the client under the
+5. **SmartShift button**: a client that declares wheel areas has its divert of SmartShift (`0xC4`) applied only while
+   the pointer is over its declared window; elsewhere the button switches the mouse's own mode (added 2026-10-27:
+   FrameScrub in front used to make it dead over other windows).
+6. **SmartShift adopted**: the user's choice is adopted as `LogiHIDPP` does now and reported to the client under the
    pointer as `wheel(byButton: true)`; the client decides whether to make it its wish.
 
 Per the repositories' rules (`CLAUDE.md`): no timers or polling at rest; work happens only on events (app switch,
