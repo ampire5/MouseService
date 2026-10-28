@@ -1,6 +1,7 @@
 import AppKit
 import Foundation
 import Testing
+@testable import MouseCore
 import XPC
 @testable import MouseClient
 import MouseContract
@@ -49,6 +50,20 @@ private let gesture: UInt16 = 0xC3
         rig.shutDown()
     }
 
+    @Test func theGlobalModeIsOnTheMouseAtOnceAndAPressIsSaved() async {
+        let rig = Rig()
+        #expect(rig.driver.applied == [MouseState(mode: .ratchet)])
+        var saved: [WheelMode] = []
+        rig.service.onGlobalModeChange = { saved.append($0) }
+        rig.driver.emit(.wheel(highResolution: false, mode: .freeSpin, byButton: true))
+        #expect(saved == [.freeSpin])
+        #expect(rig.driver.applied.last == MouseState(mode: .freeSpin))
+        rig.service.setGlobalMode(.ratchet)
+        #expect(rig.driver.applied.last == MouseState(mode: .ratchet))
+        #expect(saved == [.freeSpin])   // the settings' own change is not saved again
+        rig.shutDown()
+    }
+
     @Test func refusesHigherMajor() async {
         let rig = Rig()
         let connection = xpc_connection_create_from_endpoint(rig.listener.endpoint)
@@ -87,7 +102,7 @@ private let gesture: UInt16 = 0xC3
         rig.service.frontmost(pid: getpid())
         await eventually("owner") { client.isOwner }
         #expect(owner == [true])
-        #expect(rig.driver.applied.last == MouseState(divert: [gesture]))
+        #expect(rig.driver.applied.last == MouseState(divert: [gesture], mode: .ratchet))
         rig.driver.emit(.button(cid: gesture, pressed: true))
         await eventually("button") { !buttons.isEmpty }
         #expect(buttons.first?.0 == gesture)
@@ -102,9 +117,9 @@ private let gesture: UInt16 = 0xC3
         client.start()
         client.want(Want(divert: [gesture]))
         rig.service.frontmost(pid: getpid())
-        await eventually("applied") { rig.driver.applied.last == MouseState(divert: [gesture]) }
+        await eventually("applied") { rig.driver.applied.last == MouseState(divert: [gesture], mode: .ratchet) }
         client.stop()
-        await eventually("released") { rig.driver.applied.last == .released }
+        await eventually("released") { rig.driver.applied.last == MouseState(mode: .ratchet) }
         #expect(rig.service.clients.isEmpty)
         rig.shutDown()
     }
@@ -130,7 +145,7 @@ private let gesture: UInt16 = 0xC3
         // The restarted service announces itself, as the app does once it listens.
         DistributedNotificationCenter.default().postNotificationName(MouseClient.serviceStarted, object: nil,
                                                                      userInfo: nil, deliverImmediately: true)
-        await eventually("new driver applied") { rig.driver.applied.last == MouseState(divert: [gesture]) }
+        await eventually("new driver applied") { rig.driver.applied.last == MouseState(divert: [gesture], mode: .ratchet) }
         #expect(events == ["owner true", "button \(gesture) true", "button \(gesture) false", "owner false", "owner true"])
         rig.shutDown()
     }

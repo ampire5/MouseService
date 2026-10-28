@@ -29,10 +29,16 @@ import XPC
     /// Called when following the pointer starts or stops being needed (`Arbiter.followsPointer`).
     public var onFollowsPointerChange: ((Bool) -> Void)?
 
-    public init(driver: any MouseDriver, version: String) {
+    /// Called when the user's SmartShift press set the global wheel mode: the app saves it.
+    public var onGlobalModeChange: ((WheelMode) -> Void)?
+
+    /// `globalMode`: the saved one. The first state, with the global mode in it, goes to the driver at once.
+    public init(driver: any MouseDriver, version: String, globalMode: WheelMode = .ratchet) {
         self.driver = driver
         self.version = version
         driver.onEvent = { [weak self] event in self?.driverEvent(event) }
+        _ = arbiter.setGlobalMode(globalMode)
+        run(arbiter.start())
     }
 
     public var followsPointer: Bool { arbiter.followsPointer }
@@ -62,6 +68,8 @@ import XPC
     public func frontmost(pid: pid_t?) { run(arbiter.frontmost(pid: pid)) }
     public func pointer(_ place: PointerPlace?) { run(arbiter.pointer(place)) }
     public func releaseAll() { run(arbiter.releaseAll()) }
+    /// The global wheel mode from the settings.
+    public func setGlobalMode(_ mode: WheelMode) { run(arbiter.setGlobalMode(mode)) }
 
     /// Cancels every peer: they see their connection end.
     public func cancelAll() {
@@ -129,6 +137,7 @@ import XPC
             switch effect {
             case let .send(id, message): send(message, to: id)
             case let .apply(state): driver.apply(state)
+            case let .globalMode(mode): onGlobalModeChange?(mode)
             case let .play(pattern, strength): driver.play(pattern: pattern, strength: strength)
             }
         }

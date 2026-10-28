@@ -14,7 +14,7 @@ public struct MouseState: Equatable, Sendable {
     public var watch: Set<UInt16>
     public var thumbWheel: Bool
     public var highResolution: Bool
-    /// nil: the mouse's own mode.
+    /// nil: the mouse's own mode. The arbiter always wants one: the global mode where no client asks for another.
     public var mode: WheelMode?
 
     public init(divert: Set<UInt16> = [], watch: Set<UInt16> = [], thumbWheel: Bool = false,
@@ -46,6 +46,8 @@ public struct PointerPlace: Equatable, Sendable {
 
 public enum Effect: Equatable, Sendable {
     case send(ClientID, ServiceMessage)
+    /// The global wheel mode changed by the user's SmartShift press: to be saved.
+    case globalMode(WheelMode)
     /// The whole new state, emitted only when it changed.
     case apply(MouseState)
     case play(pattern: UInt8, strength: UInt8?)
@@ -54,8 +56,9 @@ public enum Effect: Equatable, Sendable {
 /// Who owns the mouse and what it should be (core spec, "Arbitration and data flow"): pure, every input an event,
 /// every output an `Effect`. The owner of buttons, haptics and the thumb wheel is the frontmost app if it is a client;
 /// an owner change releases every control it holds before it is told, and the new owner is told after the mouse has
-/// its wishes. The main wheel's mode is that of the window under the pointer, from its client's declared areas; the
-/// client under the pointer hears the wheel's state.
+/// its wishes. The main wheel's mode is that of the window under the pointer, from its client's declared areas, and
+/// the global mode (ratchet at start) wherever no client asks for another; the client under the pointer hears the
+/// wheel's state.
 public struct Arbiter: Sendable {
     struct Client: Sendable {
         let pid: pid_t
@@ -81,6 +84,14 @@ public struct Arbiter: Sendable {
     private var wheelReceiver: ClientID?
     /// The wheel's state as the mouse last reported it.
     private var wheel: (highResolution: Bool, mode: WheelMode?) = (false, nil)
+    /// The mode wanted where no client's wish reaches: ratchet until the settings or a SmartShift press say another.
+    public private(set) var globalMode = WheelMode.ratchet
+    /// Where the mode wanted came from.
+    private enum ModeSource: Equatable { case global, client(ClientID, WheelMode) }
+    /// The source under which the user last pressed SmartShift. `LogiHIDPP` took the press as the mouse's wanted mode,
+    /// so the arbiter's `wanted` and the mouse differ until the source changes: then the state is applied once more
+    /// even if it equals `wanted`. Moves inside the same area apply nothing and leave the press in force.
+    private var pressSource: ModeSource?
 
     public init() {}
 
@@ -94,12 +105,35 @@ public struct Arbiter: Sendable {
         return update()
     }
 
-    /// The mouse reported its wheel: to the client under the pointer.
+    /// The mouse reported its wheel: to the client under the pointer. A press of the button where no client's wish sets
+    /// the mode is the user's choice of the global mode.
     public mutating func wheelState(highResolution: Bool, mode: WheelMode?, byButton: Bool) -> [Effect] {
         wheel = (highResolution, mode)
-        guard let wheelReceiver else { return [] }
-        return [.send(wheelReceiver, .wheel(highResolution: highResolution, mode: mode, byButton: byButton))]
+        var effects: [Effect] = []
+        if byButton {
+            let source = modeSource()
+            pressSource = source
+            if source == .global, let mode, mode != globalMode {
+                globalMode = mode
+                effects.append(.globalMode(mode))
+                effects += update()
+            }
+        }
+        if let wheelReceiver {
+            effects.append(.send(wheelReceiver, .wheel(highResolution: highResolution, mode: mode, byButton: byButton)))
+        }
+        return effects
     }
+
+    /// The global mode from the settings (or the saved one at launch).
+    public mutating func setGlobalMode(_ mode: WheelMode) -> [Effect] {
+        guard mode != globalMode else { return [] }
+        globalMode = mode
+        return update()
+    }
+
+    /// The first state, so the global mode is on the mouse before any client or app switch.
+    public mutating func start() -> [Effect] { update() }
 
     public mutating func connect(_ id: ClientID, pid: pid_t) -> [Effect] {
         clients[id] = Client(pid: pid)
@@ -170,9 +204,15 @@ public struct Arbiter: Sendable {
             state.watch = want.watch
             state.thumbWheel = want.thumbWheel
         }
-        state.mode = entries.lazy.compactMap(\.mode).first
+        state.mode = entries.lazy.compactMap(\.mode).first ?? globalMode
         state.highResolution = entries.lazy.compactMap(\.highResolution).first ?? false
         return state
+    }
+
+    private func modeSource() -> ModeSource {
+        let (receiver, entries) = wheelEntries()
+        guard let receiver, let mode = entries.lazy.compactMap(\.mode).first else { return .global }
+        return .client(receiver, mode)
     }
 
     /// The client whose window is under the pointer and its entries that cover the point, in its order. A rect holds
@@ -208,7 +248,10 @@ public struct Arbiter: Sendable {
             owner = newOwner
         }
         let state = computeWanted()
-        if state != wanted {
+        let source = modeSource()
+        let pressUndone = pressSource.map { $0 != source } ?? false
+        if pressUndone { pressSource = nil }
+        if state != wanted || pressUndone {
             wanted = state
             effects.append(.apply(state))
         }

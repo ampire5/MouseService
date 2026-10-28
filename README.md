@@ -8,8 +8,9 @@ Master 4 is handled over HID++ through [LogiHIDPP](https://github.com/ampire5/Lo
 - **The Logitech mouse for apps.** A menu-bar launchd agent owns the mouse. Apps are clients over a versioned XPC
   contract (`MouseClient`, `MouseContract`).
   - The app in front gets the buttons it diverts or watches, the thumb wheel and the haptics.
-  - The window under the pointer sets the wheel's mode (free spin or ratchet) and Precision Scroll, in the areas its
-    app declares.
+  - The wheel ratchets everywhere by default. The window under the pointer can ask for another mode (free spin or
+    ratchet) and Precision Scroll, in the areas its app declares; outside them the wheel goes back to the global
+    mode. The global mode is a setting, and the SmartShift button changes it where no app does.
   - A client that crashes releases everything at once. A service that crashes is restarted by launchd, and the
     clients come back.
   - The mouse's own settings (haptic strength, panel force) live in the service's Settings.

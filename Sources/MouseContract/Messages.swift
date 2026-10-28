@@ -32,7 +32,8 @@ public enum WheelMode: UInt8, Sendable {
 }
 
 /// A client's wish for the main wheel over one of its windows, or parts of it (`rects`, in the window's coordinates,
-/// origin at the bottom-left of its frame; nil: the whole window). A nil field asks nothing of the wheel.
+/// origin at the bottom-left of its frame; nil: the whole window). A nil field asks nothing of the wheel: the mode is
+/// then the service's global one (ratchet unless the user chose otherwise), Precision Scroll is off.
 public struct WheelWish: Equatable, Sendable {
     public var window: Int
     public var rects: [CGRect]?

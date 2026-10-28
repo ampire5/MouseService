@@ -76,17 +76,22 @@ import SettingsKit
     private func startService() {
         let driver = LogiMouseDriver(hapticStrength: settings.hapticStrength, panelForce: settings.panelForce)
         let version = Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? "?"
-        let service = Service(driver: driver, version: version)
+        let service = Service(driver: driver, version: version, globalMode: settings.wheelMode)
+        // A SmartShift press where no app asks for a mode is the user's choice: kept as the setting.
+        service.onGlobalModeChange = { [weak self] mode in
+            try? self?.settings.setValue(mode == .freeSpin ? "free-spin" : "ratchet", forKey: ServiceSettings.wheelModeKey)
+        }
         let tracker = PointerTracker { [weak service] place in service?.pointer(place) }
         service.onFollowsPointerChange = { [weak tracker] on in tracker?.setActive(on) }
         frontmostTracker = FrontmostTracker { [weak service, weak tracker] pid in
             service?.frontmost(pid: pid)
             tracker?.invalidate()
         }
-        settings.onChange = { [weak self, weak driver] in
+        settings.onChange = { [weak self, weak driver, weak service] in
             guard let self, let driver else { return }
             driver.setHapticStrength(settings.hapticStrength)
             driver.setPanelForce(settings.panelForce)
+            service?.setGlobalMode(settings.wheelMode)
         }
         listener = Listener(machService: MouseClient.serviceName, service: service)
         // Clients that lost a service wait for this rather than wake it themselves (a quit service stays quit).

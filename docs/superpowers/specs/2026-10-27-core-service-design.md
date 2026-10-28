@@ -111,7 +111,7 @@ Rules:
 1. **Owner of buttons and haptics** is the frontmost app if it is a client. Otherwise there is no owner and nothing is
    diverted or watched: the mouse behaves as the system's.
 2. **Wheel**: if the window under the pointer belongs to a client and the point is in a declared area, its mode applies.
-   Otherwise the mouse's own mode (the one before the service changed it). Sub-project 3 adds a global rule here.
+   Otherwise the global mode: ratchet by default, changed by the settings or by a SmartShift press where no client's wish sets the mode (sub-project 3, `2026-10-28-global-wheel-mode-design.md`; before it, the mouse's own mode).
 3. **Owner change** in one step: `released` for every held control and `owner: false` to the old owner, then the new
    divert / watch sets, then `owner: true` to the new owner.
 4. **Applying by difference**: the service keeps the known state of the mouse and writes only what differs. Writes go

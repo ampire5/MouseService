@@ -3,6 +3,9 @@ import Testing
 @testable import MouseContract
 @testable import MouseCore
 
+/// What the arbiter wants with nothing taken: the global mode alone.
+let idle = MouseState(mode: .ratchet)
+
 func id(_ n: Int) -> ClientID { ClientID(raw: n) }
 func pid(_ n: Int) -> pid_t { pid_t(100 + n) }
 
@@ -22,7 +25,7 @@ private let back: UInt16 = 0x53
 @Test func frontmostClientOwns() {
     var a = arbiter([1: Want(divert: [gesture])])
     let effects = a.frontmost(pid: pid(1))
-    #expect(effects.contains(.apply(MouseState(divert: [gesture]))))
+    #expect(effects.contains(.apply(MouseState(divert: [gesture], mode: .ratchet))))
     #expect(effects.contains(.send(id(1), .owner(true))))
     #expect(a.owner == id(1))
 }
@@ -32,7 +35,7 @@ private let back: UInt16 = 0x53
     _ = a.frontmost(pid: pid(1))
     _ = a.frontmost(pid: 999)
     #expect(a.owner == nil)
-    #expect(a.wanted == .released)
+    #expect(a.wanted == idle)
 }
 
 @Test func buttonsGoToOwnerOnly() {
@@ -51,7 +54,7 @@ private let back: UInt16 = 0x53
         .send(id(1), .button(cid: gesture, pressed: false, time: 6)),
         .send(id(1), .watching([])),
         .send(id(1), .owner(false)),
-        .apply(MouseState(divert: [gesture])),
+        .apply(MouseState(divert: [gesture], mode: .ratchet)),
         .send(id(2), .owner(true)),
         .send(id(2), .watching([])),
     ])
@@ -61,7 +64,7 @@ private let back: UInt16 = 0x53
     var a = arbiter([1: Want(divert: [gesture])])
     _ = a.frontmost(pid: pid(1))
     _ = a.button(cid: gesture, pressed: true, time: 5)
-    #expect(a.disconnect(id(1)) == [.apply(.released)])
+    #expect(a.disconnect(id(1)) == [.apply(idle)])
     #expect(a.owner == nil)
     #expect(a.button(cid: gesture, pressed: false, time: 6) == [])
 }
@@ -71,7 +74,7 @@ private let back: UInt16 = 0x53
     var a = arbiter([1: want1, 2: want2])
     var all: [Effect] = []
     for i in 0..<10 { all += a.frontmost(pid: pid(i % 2 == 0 ? 1 : 2)) }
-    #expect(a.wanted == MouseState(divert: [back], thumbWheel: true))
+    #expect(a.wanted == MouseState(divert: [back], thumbWheel: true, mode: .ratchet))
     #expect(a.owner == id(2))
     var owner: ClientID?
     for case let .send(to, .owner(on)) in all {
@@ -113,12 +116,12 @@ private let back: UInt16 = 0x53
         .send(id(1), .button(cid: gesture, pressed: false, time: 5)),
         .send(id(1), .watching([])),
         .send(id(1), .owner(false)),
-        .apply(.released),
+        .apply(idle),
     ])
     #expect(a.owner == nil)
     _ = a.frontmost(pid: pid(1))
     #expect(a.owner == id(1))
-    #expect(a.wanted == MouseState(divert: [gesture]))
+    #expect(a.wanted == MouseState(divert: [gesture], mode: .ratchet))
 }
 
 @Test func connectAfterActivation() {
@@ -126,7 +129,7 @@ private let back: UInt16 = 0x53
     _ = a.frontmost(pid: pid(1))
     let effects = a.connect(id(1), pid: pid(1))
     #expect(effects.contains(.send(id(1), .owner(true))))
-    #expect(a.want(id(1), Want(divert: [gesture])) == [.apply(MouseState(divert: [gesture]))])
+    #expect(a.want(id(1), Want(divert: [gesture])) == [.apply(MouseState(divert: [gesture], mode: .ratchet))])
 }
 
 @Test func watchingGoesToOwnerAndIsRemembered() {

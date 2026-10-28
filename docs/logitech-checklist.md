@@ -16,6 +16,11 @@ line says what to do and what must happen.
 5. Same probe: a press of the SmartShift button over its window prints `wheel … byButton true`.
 6. Sleep the Mac, wake it: step 1 still holds.
 
+7. Global wheel mode: with no client open the wheel ratchets on the desktop. `mouse-client-probe divert 0xC3 --wheel
+   freeSpin` frees it over the probe's window only; moving out gives the ratchet back. A press of SmartShift on the
+   desktop switches the wheel, the setting "Wheel mode" shows it, and it survives restarting the service
+   (`launchctl kill SIGKILL gui/$(id -u)/local.mouseservice`).
+
 Run on 2026-10-27, M4 Max, macOS 27.0.1: step 1 (ownership, through System Events activating the probe and Finder)
 passed: `owner true`, `watching []`, `owner false`. Step 3 passed on 2026-10-28 (probe in front, `launchctl kill SIGKILL`): `owner false`, `available false`, then
 `available true`, the device back, `owner true`. Steps 1 (buttons), 2, 4, 5, 6: *pending*, by hand.
