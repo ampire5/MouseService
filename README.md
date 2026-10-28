@@ -19,9 +19,10 @@ Master 4 is handled over HID++ through [LogiHIDPP](https://github.com/ampire5/Lo
   - A click of back or forward is a page swipe.
   - Back held and dragged is a three-finger swipe that follows the hand: sideways between Spaces, up to Mission
     Control, down to App Exposé.
-- **Pointer and wheel per device**, in LinearMouse's format (`~/.config/mouseservice/devices.json`, imported once from
-  LinearMouse): pointer speed and acceleration, a reversed wheel, scrolls dropped under a modifier. Design:
-  `docs/superpowers/specs/2026-10-27-pointer-wheel-design.md`.
+- **Pointer and wheel per device**, in `~/.config/mouseservice/config.yaml` (a device named once, its app rules nested;
+  an old `devices.json` or LinearMouse's file is migrated into it at the first start): pointer speed and acceleration,
+  a reversed wheel, scrolls dropped under a modifier. Design: `docs/superpowers/specs/2026-10-27-pointer-wheel-design.md`
+  and `2026-10-28-yaml-config-design.md`.
 
 Needs macOS 26 and the Accessibility permission (for the gestures and the scroll rules).
 

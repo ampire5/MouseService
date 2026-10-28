@@ -12,12 +12,14 @@ let package = Package(
     dependencies: [
         .package(url: "https://github.com/ampire5/LogiHIDPP.git", from: "0.1.0"),
         .package(url: "https://github.com/ampire5/SettingsKit.git", from: "0.7.0"),
+        // The devices config (config.yaml).
+        .package(url: "https://github.com/jpsim/Yams.git", from: "5.1.0"),
     ],
     targets: [
         // What a press and a drag of the side buttons mean: pure, no AppKit, no events.
         .target(name: "GestureCore"),
-        // Pointer and wheel rules per device and app (devices.json, LinearMouse's format): pure, no IOKit, no events.
-        .target(name: "PointerCore"),
+        // Pointer and wheel rules per device and app (config.yaml): pure, no IOKit, no events.
+        .target(name: "PointerCore", dependencies: [.product(name: "Yams", package: "Yams")]),
         // The XPC contract: messages and their encoding, no logic.
         .target(name: "MouseContract"),
         // Who owns the mouse and what it should be: pure, no hardware, no XPC.

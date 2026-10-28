@@ -1,6 +1,7 @@
 # Pointer and wheel options: LinearMouse replaced
 
-Date: 2026-10-27. Status: being implemented. This is sub-project 4 of the core spec, brought ahead of the core
+Date: 2026-10-27. Status: implemented. The file format below (`devices.json`) was replaced on 2026-10-28 by
+`config.yaml` (`2026-10-28-yaml-config-design.md`); what the rules do is unchanged. This is sub-project 4 of the core spec, brought ahead of the core
 (`2026-10-27-core-service-design.md`) at the user's request: one program less now.
 
 ## What is replaced

@@ -14,7 +14,7 @@ final class ScrollRules: Sendable {
     var isEmpty: Bool { rules.withLock { $0.isEmpty } }
 }
 
-/// LinearMouse's part (pointer and wheel spec): the rules of `~/.config/mouseservice/devices.json` applied to every
+/// LinearMouse's part (pointer and wheel spec): the rules of `~/.config/mouseservice/config.yaml` applied to every
 /// mouse and trackpad. Pointer speed and acceleration are the devices' own HID properties, written when a device
 /// appears, the rules change or (with app rules) another app comes in front, and only when they differ from what was
 /// written; the values a device had when first seen go back when no rule covers it any more and at quit. The scroll
@@ -24,12 +24,15 @@ final class ScrollRules: Sendable {
     let scrollRules = ScrollRules()
     /// For the menu: how many schemes and devices, or what is wrong with the file.
     var summary: String {
-        if let rulesError { return "devices.json: \(rulesError)" }
+        if let rulesError { return "config.yaml: \(rulesError)" }
         let set = devices.values.filter { $0.applied != nil || scrollRules.rule(for: $0.id) != nil }.count
-        return "Devices: \(rules.count) rules, \(set) of \(devices.count) devices set"
+        return "Devices: \(rules.count) configured, \(set) of \(devices.count) set"
     }
 
     static let configURL = FileManager.default.homeDirectoryForCurrentUser
+        .appendingPathComponent(".config/mouseservice/config.yaml")
+    /// What the config was before 2026-10-28: LinearMouse's schemes; migrated once into `config.yaml`.
+    private static let legacyURL = FileManager.default.homeDirectoryForCurrentUser
         .appendingPathComponent(".config/mouseservice/devices.json")
     private static let linearMouseURL = FileManager.default.homeDirectoryForCurrentUser
         .appendingPathComponent(".config/linearmouse/linearmouse.json")
@@ -50,7 +53,7 @@ final class ScrollRules: Sendable {
     private let client: IOHIDEventSystemClient?
     private var devices: [UInt64: Device] = [:]
     private var rules = DeviceRules.empty
-    /// What is wrong with devices.json; the rules read before stay in force.
+    /// What is wrong with config.yaml; the rules read before stay in force.
     private var rulesError: String?
     private var frontmost: String?
     private var appObserver: NSObjectProtocol?
@@ -73,7 +76,7 @@ final class ScrollRules: Sendable {
     }
 
     func start() {
-        importLinearMouseIfNeeded()
+        migrateIfNeeded()
         loadRules()
         watchConfig()
         watchDevices()
@@ -109,19 +112,55 @@ final class ScrollRules: Sendable {
 
     // MARK: Rules
 
-    /// The first start without a config: LinearMouse's schemes, only the fields MouseService acts on.
-    private func importLinearMouseIfNeeded() {
+    /// The first start without `config.yaml`: the old `devices.json` (kept as `devices.json.bak`), else LinearMouse's own
+    /// file, written as YAML (`DevicesMigration`).
+    private func migrateIfNeeded() {
         let fm = FileManager.default
-        guard !fm.fileExists(atPath: Self.configURL.path),
-              let data = try? Data(contentsOf: Self.linearMouseURL) else { return }
+        guard !fm.fileExists(atPath: Self.configURL.path) else { return }
+        let (source, name): (URL, String) = fm.fileExists(atPath: Self.legacyURL.path)
+            ? (Self.legacyURL, "devices.json") : (Self.linearMouseURL, "LinearMouse's configuration")
+        guard let data = try? Data(contentsOf: source) else { return }
         do {
+            let yaml = DevicesMigration.yaml(from: try LegacyDeviceRules(json: data), source: name)
             try fm.createDirectory(at: Self.configURL.deletingLastPathComponent(), withIntermediateDirectories: true)
-            try LinearMouseImport.convert(data).write(to: Self.configURL)
-            Self.log.notice("Imported LinearMouse's configuration into devices.json")
+            try yaml.write(to: Self.configURL, atomically: true, encoding: .utf8)
+            if source == Self.legacyURL {
+                try fm.moveItem(at: source, to: source.appendingPathExtension("bak"))
+            }
+            Self.log.notice("Migrated \(name, privacy: .public) into config.yaml")
         } catch {
-            Self.log.error("LinearMouse import failed: \(String(describing: error), privacy: .public)")
+            Self.log.error("Migration to config.yaml failed: \(String(describing: error), privacy: .public)")
         }
     }
+
+    /// The file `Edit Devices Config…` opens: made with a short example when there is none.
+    static func ensureConfigFile() {
+        guard !FileManager.default.fileExists(atPath: configURL.path) else { return }
+        try? FileManager.default.createDirectory(at: configURL.deletingLastPathComponent(), withIntermediateDirectories: true)
+        try? Self.template.write(to: configURL, atomically: true, encoding: .utf8)
+    }
+
+    private static let template = """
+    # MouseService: pointer and wheel per device. Saved changes are read at once.
+    # A device is named once; its id is vendor:product in hex (the menu's device list or System Information shows them).
+    #
+    # devices:
+    #   MX Master 4:
+    #     id: 46d:c548
+    #     speed: 0.125                  # 0…1
+    #     acceleration: 0.225           # 0…40
+    #     disable-acceleration: false
+    #     reverse-scroll: vertical      # none | vertical | horizontal | both
+    #     ignore-horizontal-scroll-with: [command, control]   # also ignore-vertical-scroll-with; shift, option
+    #     apps:
+    #       com.example.App: { speed: 0.066 }    # the frontmost app's bundle ID; the same fields
+    #   Some trackpad:
+    #     id: 4c:265
+    #     serial: "AA:BB:CC:DD:EE:FF"    # optional: only that unit
+
+    devices:
+
+    """
 
     /// A broken file keeps the rules in force and says so in the menu.
     private func loadRules() {
@@ -131,14 +170,14 @@ final class ScrollRules: Sendable {
             return
         }
         do {
-            rules = try DeviceRules(json: data)
+            rules = try DeviceRules(yaml: String(decoding: data, as: UTF8.self))
             if !rules.ignoredFields.isEmpty {
-                Self.log.notice("devices.json: ignored \(self.rules.ignoredFields.joined(separator: ", "), privacy: .public)")
+                Self.log.notice("config.yaml: ignored \(self.rules.ignoredFields.joined(separator: ", "), privacy: .public)")
             }
             rulesError = nil
         } catch {
             rulesError = "\(error)"
-            Self.log.error("devices.json: \(String(describing: error), privacy: .public)")
+            Self.log.error("config.yaml: \(String(describing: error), privacy: .public)")
         }
     }
 

@@ -237,6 +237,7 @@ import SettingsKit
     }
 
     @objc private func editDevicesConfig() {
+        PointerDevices.ensureConfigFile()
         NSWorkspace.shared.open(PointerDevices.configURL)
     }
 

@@ -1,4 +1,5 @@
 import Foundation
+import Yams
 
 /// What a rule's `if` can name of a pointing device (LinearMouse's `if.device`).
 public struct DeviceIdentity: Equatable, Sendable {
@@ -92,89 +93,72 @@ public struct ResolvedRules: Equatable, Sendable {
     public var scroll = ScrollRule.none
 }
 
-/// `devices.json`: LinearMouse's schemes, the fields MouseService acts on (the design spec, "Fields read"). Schemes
-/// whose `if` matches apply in file order, later fields over earlier ones.
-public struct DeviceRules: Sendable {
-    struct Condition: Sendable {
-        var vendorID: Int?
-        var productID: Int?
-        var productName: String?
-        var serialNumber: String?
-        var category: DeviceIdentity.Category?
-        var app: String?
-        /// The condition names something MouseService cannot check: it never matches, so the rule does not widen to
-        /// every device.
-        var unsupported = false
+/// What one block of `config.yaml` sets: a device's own fields, or those of one of its apps. A field that is nil leaves
+/// what an earlier entry set; `reverse` and the two drop lists replace as a whole.
+struct RuleFields: Equatable, Sendable {
+    var speed: Double?
+    var acceleration: Double?
+    var disableAcceleration: Bool?
+    var reverse: (vertical: Bool, horizontal: Bool)?
+    var dropVertical: ModifierSet?
+    var dropHorizontal: ModifierSet?
 
-        func matches(_ device: DeviceIdentity, app frontmost: String?) -> Bool {
-            if unsupported { return false }
-            if let vendorID, vendorID != device.vendorID { return false }
-            if let productID, productID != device.productID { return false }
-            if let productName, productName != device.productName { return false }
-            if let serialNumber, serialNumber != device.serialNumber { return false }
-            if let category, category != device.category { return false }
-            if let app, app != frontmost { return false }
-            return true
+    static func == (a: Self, b: Self) -> Bool {
+        a.speed == b.speed && a.acceleration == b.acceleration && a.disableAcceleration == b.disableAcceleration
+            && a.reverse?.vertical == b.reverse?.vertical && a.reverse?.horizontal == b.reverse?.horizontal
+            && a.dropVertical == b.dropVertical && a.dropHorizontal == b.dropHorizontal
+    }
+
+    func apply(to result: inout ResolvedRules) {
+        if let speed { result.pointer.speed = speed }
+        if let acceleration { result.pointer.acceleration = acceleration }
+        if let disableAcceleration { result.pointer.disableAcceleration = disableAcceleration }
+        if let reverse {
+            result.scroll.reverseVertical = reverse.vertical
+            result.scroll.reverseHorizontal = reverse.horizontal
+        }
+        if let dropVertical { result.scroll.dropVertical = dropVertical }
+        if let dropHorizontal { result.scroll.dropHorizontal = dropHorizontal }
+    }
+}
+
+/// `config.yaml` (design spec `2026-10-28-yaml-config-design.md`): the devices, each named once with its app rules
+/// nested. Every entry that matches a device applies in file order, its own fields and then those of its entry for the
+/// frontmost app.
+public struct DeviceRules: Sendable {
+    struct Entry: Sendable {
+        var vendorID: Int
+        var productID: Int
+        var serialNumber: String?
+        var fields: RuleFields
+        var apps: [String: RuleFields]
+
+        func matches(_ device: DeviceIdentity) -> Bool {
+            vendorID == device.vendorID && productID == device.productID
+                && (serialNumber == nil || serialNumber == device.serialNumber)
         }
     }
 
-    /// One field of a scheme's scroll part; nil leaves what earlier schemes set.
-    struct ScrollPart: Sendable {
-        var reverseVertical: Bool?
-        var reverseHorizontal: Bool?
-        /// Per axis and modifier: true drops (`preventDefault`), false clears an earlier drop (any other type).
-        var vertical: [(ModifierSet, Bool)] = []
-        var horizontal: [(ModifierSet, Bool)] = []
-    }
-
-    struct Scheme: Sendable {
-        /// Any of them matches (LinearMouse takes one condition or an array); empty: always.
-        var conditions: [Condition]
-        var pointer: PointerSettings
-        var scroll: ScrollPart
-    }
-
-    var schemes: [Scheme]
-    /// The fields present in the file that MouseService does not act on.
+    var entries: [Entry]
+    /// The keys present in the file that MouseService does not act on, as paths.
     public private(set) var ignoredFields: [String]
 
-    public var count: Int { schemes.count }
-    /// Whether some scheme names an app: the frontmost app then matters.
-    public var dependsOnApp: Bool { schemes.contains { $0.conditions.contains { $0.app != nil } } }
+    public var count: Int { entries.count }
+    /// Whether some entry has app rules: the frontmost app then matters.
+    public var dependsOnApp: Bool { entries.contains { !$0.apps.isEmpty } }
 
-    public static let empty = DeviceRules(schemes: [], ignoredFields: [])
+    public static let empty = DeviceRules(entries: [], ignoredFields: [])
 
-    public init(json data: Data) throws {
-        guard let root = try JSONSerialization.jsonObject(with: data) as? [String: Any],
-              let list = root["schemes"] as? [[String: Any]] else {
-            throw RulesError.noSchemes
-        }
-        var ignored: [String] = []
-        schemes = try list.enumerated().map { index, raw in
-            try Self.scheme(raw, path: "schemes[\(index)]", ignored: &ignored)
-        }
-        ignoredFields = ignored
-    }
-
-    init(schemes: [Scheme], ignoredFields: [String]) {
-        self.schemes = schemes
+    init(entries: [Entry], ignoredFields: [String]) {
+        self.entries = entries
         self.ignoredFields = ignoredFields
     }
 
     public func resolve(_ device: DeviceIdentity, app: String?) -> ResolvedRules {
         var result = ResolvedRules()
-        for scheme in schemes where scheme.conditions.isEmpty || scheme.conditions.contains(where: { $0.matches(device, app: app) }) {
-            if let v = scheme.pointer.speed { result.pointer.speed = v }
-            if let v = scheme.pointer.acceleration { result.pointer.acceleration = v }
-            if let v = scheme.pointer.disableAcceleration { result.pointer.disableAcceleration = v }
-            if let v = scheme.scroll.reverseVertical { result.scroll.reverseVertical = v }
-            if let v = scheme.scroll.reverseHorizontal { result.scroll.reverseHorizontal = v }
-            for (modifier, drop) in scheme.scroll.vertical {
-                if drop { result.scroll.dropVertical.insert(modifier) } else { result.scroll.dropVertical.remove(modifier) }
-            }
-            for (modifier, drop) in scheme.scroll.horizontal {
-                if drop { result.scroll.dropHorizontal.insert(modifier) } else { result.scroll.dropHorizontal.remove(modifier) }
-            }
+        for entry in entries where entry.matches(device) {
+            entry.fields.apply(to: &result)
+            if let app, let fields = entry.apps[app] { fields.apply(to: &result) }
         }
         return result
     }
@@ -182,114 +166,141 @@ public struct DeviceRules: Sendable {
     // MARK: Parsing
 
     public enum RulesError: Error, Equatable, CustomStringConvertible {
-        case noSchemes
+        case syntax(String)
         case bad(String)
 
         public var description: String {
             switch self {
-            case .noSchemes: "no \"schemes\" array"
-            case let .bad(path): "bad value at \(path)"
+            case let .syntax(message): "not YAML: \(message)"
+            case let .bad(path): "bad value at \(path.isEmpty ? "the top level" : path)"
             }
         }
     }
 
-    private static func scheme(_ raw: [String: Any], path: String, ignored: inout [String]) throws -> Scheme {
-        var scheme = Scheme(conditions: [], pointer: PointerSettings(), scroll: ScrollPart())
-        for (key, value) in raw {
-            switch key {
-            case "if":
-                let items = (value as? [[String: Any]]) ?? (value as? [String: Any]).map { [$0] }
-                guard let items else { throw RulesError.bad("\(path).if") }
-                scheme.conditions = try items.map { try condition($0, path: "\(path).if", ignored: &ignored) }
-            case "pointer":
-                guard let pointer = value as? [String: Any] else { throw RulesError.bad("\(path).pointer") }
-                for (field, v) in pointer {
-                    switch field {
-                    case "speed": scheme.pointer.speed = try number(v, "\(path).pointer.speed", in: 0...1)
-                    case "acceleration": scheme.pointer.acceleration = try number(v, "\(path).pointer.acceleration", in: 0...40)
-                    case "disableAcceleration":
-                        guard let b = v as? Bool else { throw RulesError.bad("\(path).pointer.disableAcceleration") }
-                        scheme.pointer.disableAcceleration = b
-                    default: ignored.append("\(path).pointer.\(field)")
-                    }
+    public init(yaml text: String) throws {
+        let root: Node?
+        do { root = try Yams.compose(yaml: text) } catch { throw RulesError.syntax("\(error)") }
+        var ignored: [String] = []
+        var entries: [Entry] = []
+        if let root, !Self.isEmpty(root) {
+            guard let top = root.mapping else { throw RulesError.bad("") }
+            for (key, value) in top {
+                guard key.string == "devices" else {
+                    ignored.append(key.string ?? "?")
+                    continue
                 }
-            case "scrolling":
-                guard let scrolling = value as? [String: Any] else { throw RulesError.bad("\(path).scrolling") }
-                for (field, v) in scrolling {
-                    switch field {
-                    case "reverse":
-                        if let b = v as? Bool {
-                            scheme.scroll.reverseVertical = b
-                            scheme.scroll.reverseHorizontal = b
-                        } else if let axes = v as? [String: Any] {
-                            scheme.scroll.reverseVertical = axes["vertical"] as? Bool
-                            scheme.scroll.reverseHorizontal = axes["horizontal"] as? Bool
-                        } else {
-                            throw RulesError.bad("\(path).scrolling.reverse")
-                        }
-                    case "modifiers":
-                        guard let axes = v as? [String: Any] else { throw RulesError.bad("\(path).scrolling.modifiers") }
-                        scheme.scroll.vertical = modifiers(axes["vertical"])
-                        scheme.scroll.horizontal = modifiers(axes["horizontal"])
-                    default: ignored.append("\(path).scrolling.\(field)")
-                    }
+                if Self.isEmpty(value) { continue }
+                guard let devices = value.mapping else { throw RulesError.bad("devices") }
+                for (nameNode, body) in devices {
+                    let name = nameNode.string ?? "?"
+                    entries.append(try Self.entry(body, path: "devices.\(name)", ignored: &ignored))
+                }
+            }
+        }
+        self.entries = entries
+        ignoredFields = ignored
+    }
+
+    /// A comment-only file, or a key with nothing under it.
+    private static func isEmpty(_ node: Node) -> Bool {
+        node.scalar.map { $0.string.isEmpty } ?? false
+    }
+
+    private static func entry(_ body: Node, path: String, ignored: inout [String]) throws -> Entry {
+        guard let map = body.mapping else { throw RulesError.bad(path) }
+        var id: (Int, Int)?
+        var serial: String?
+        var fields = RuleFields()
+        var apps: [String: RuleFields] = [:]
+        for (keyNode, value) in map {
+            let key = keyNode.string ?? "?"
+            switch key {
+            case "id": id = try Self.id(value, "\(path).id")
+            case "serial":
+                guard let s = value.string, !s.isEmpty else { throw RulesError.bad("\(path).serial") }
+                serial = s
+            case "apps":
+                guard let list = value.mapping else {
+                    if isEmpty(value) { continue }
+                    throw RulesError.bad("\(path).apps")
+                }
+                for (appNode, block) in list {
+                    let app = appNode.string ?? "?"
+                    apps[app] = try Self.fields(block, path: "\(path).apps.\(app)", ignored: &ignored)
                 }
             default:
-                ignored.append("\(path).\(key)")
+                try Self.field(key, value, into: &fields, path: path, ignored: &ignored)
             }
         }
-        return scheme
+        guard let id else { throw RulesError.bad("\(path).id") }
+        return Entry(vendorID: id.0, productID: id.1, serialNumber: serial, fields: fields, apps: apps)
     }
 
-    private static func condition(_ raw: [String: Any], path: String, ignored: inout [String]) throws -> Condition {
-        var condition = Condition()
-        for (key, value) in raw {
-            switch key {
-            case "app":
-                guard let s = value as? String else { throw RulesError.bad("\(path).app") }
-                condition.app = s
-            case "device":
-                guard let device = value as? [String: Any] else { throw RulesError.bad("\(path).device") }
-                for (field, v) in device {
-                    switch field {
-                    case "vendorID": condition.vendorID = try hex(v, "\(path).device.vendorID")
-                    case "productID": condition.productID = try hex(v, "\(path).device.productID")
-                    case "productName": condition.productName = v as? String
-                    case "serialNumber": condition.serialNumber = v as? String
-                    case "category":
-                        guard let s = v as? String, let c = DeviceIdentity.Category(rawValue: s) else {
-                            throw RulesError.bad("\(path).device.category")
-                        }
-                        condition.category = c
-                    default: ignored.append("\(path).device.\(field)")
-                    }
-                }
-            default:
-                ignored.append("\(path).\(key)")
-                condition.unsupported = true
+    private static func fields(_ body: Node, path: String, ignored: inout [String]) throws -> RuleFields {
+        guard let map = body.mapping else {
+            if isEmpty(body) { return RuleFields() }
+            throw RulesError.bad(path)
+        }
+        var fields = RuleFields()
+        for (keyNode, value) in map {
+            try Self.field(keyNode.string ?? "?", value, into: &fields, path: path, ignored: &ignored)
+        }
+        return fields
+    }
+
+    private static func field(_ key: String, _ value: Node, into fields: inout RuleFields, path: String,
+                              ignored: inout [String]) throws {
+        let at = "\(path).\(key)"
+        switch key {
+        case "speed": fields.speed = try number(value, at, in: 0...1)
+        case "acceleration": fields.acceleration = try number(value, at, in: 0...40)
+        case "disable-acceleration":
+            switch value.string {
+            case "true": fields.disableAcceleration = true
+            case "false": fields.disableAcceleration = false
+            default: throw RulesError.bad(at)
             }
+        case "reverse-scroll":
+            switch value.string {
+            case "none": fields.reverse = (false, false)
+            case "vertical": fields.reverse = (true, false)
+            case "horizontal": fields.reverse = (false, true)
+            case "both": fields.reverse = (true, true)
+            default: throw RulesError.bad(at)
+            }
+        case "ignore-vertical-scroll-with": fields.dropVertical = try modifiers(value, at)
+        case "ignore-horizontal-scroll-with": fields.dropHorizontal = try modifiers(value, at)
+        default: ignored.append(at)
         }
-        return condition
     }
 
-    private static func modifiers(_ raw: Any?) -> [(ModifierSet, Bool)] {
-        guard let raw = raw as? [String: Any] else { return [] }
-        return ModifierSet.byName.compactMap { name, modifier in
-            guard let action = raw[name] as? [String: Any] else { return nil }
-            return (modifier, action["type"] as? String == "preventDefault")
+    /// `vendor:product`, hex with or without `0x`; read as the text it is (YAML would take `1234:5678` for a number).
+    private static func id(_ node: Node, _ path: String) throws -> (Int, Int) {
+        guard let text = node.string else { throw RulesError.bad(path) }
+        let parts = text.split(separator: ":", omittingEmptySubsequences: false)
+        func hex(_ s: Substring) -> Int? {
+            let digits = s.lowercased().hasPrefix("0x") ? s.dropFirst(2) : s
+            return Int(digits, radix: 16)
         }
+        guard parts.count == 2, let vendor = hex(parts[0]), let product = hex(parts[1]) else { throw RulesError.bad(path) }
+        return (vendor, product)
     }
 
-    /// `"0x46d"` or a number.
-    private static func hex(_ value: Any, _ path: String) throws -> Int {
-        if let n = value as? Int { return n }
-        if let s = value as? String, s.lowercased().hasPrefix("0x"), let n = Int(s.dropFirst(2), radix: 16) { return n }
-        throw RulesError.bad(path)
-    }
-
-    private static func number(_ value: Any, _ path: String, in range: ClosedRange<Double>) throws -> Double {
-        guard let n = (value as? NSNumber)?.doubleValue, !(value is Bool) else { throw RulesError.bad(path) }
+    private static func number(_ node: Node, _ path: String, in range: ClosedRange<Double>) throws -> Double {
+        guard node.scalar != nil, let text = node.string, let n = Double(text), n.isFinite else { throw RulesError.bad(path) }
         return min(max(n, range.lowerBound), range.upperBound)
+    }
+
+    /// A list of modifier names (a single name is a list of one).
+    private static func modifiers(_ node: Node, _ path: String) throws -> ModifierSet {
+        let names: [Node] = node.sequence.map { Array($0) } ?? (node.scalar.map { _ in [node] } ?? [])
+        guard node.sequence != nil || node.scalar != nil else { throw RulesError.bad(path) }
+        var set: ModifierSet = []
+        for name in names where !(name.string ?? "").isEmpty {
+            guard let match = ModifierSet.byName.first(where: { $0.0 == name.string }) else { throw RulesError.bad(path) }
+            set.insert(match.1)
+        }
+        return set
     }
 }
 
@@ -305,41 +316,5 @@ public enum PointerMath {
 
     public static func speed(resolution: Double) -> Double {
         (1 / resolution - inverseRange.lowerBound) / (inverseRange.upperBound - inverseRange.lowerBound)
-    }
-}
-
-/// The one-time import of LinearMouse's configuration: its schemes with only the fields MouseService acts on; schemes
-/// left with nothing but a condition are dropped.
-public enum LinearMouseImport {
-    public static func convert(_ data: Data) throws -> Data {
-        guard let root = try JSONSerialization.jsonObject(with: data) as? [String: Any],
-              let schemes = root["schemes"] as? [[String: Any]] else {
-            throw DeviceRules.RulesError.noSchemes
-        }
-        let kept: [[String: Any]] = schemes.compactMap { scheme in
-            var out: [String: Any] = [:]
-            if let pointer = scheme["pointer"] as? [String: Any] {
-                let p = pointer.filter { ["speed", "acceleration", "disableAcceleration"].contains($0.key) }
-                if !p.isEmpty { out["pointer"] = p }
-            }
-            if let scrolling = scheme["scrolling"] as? [String: Any] {
-                var s: [String: Any] = [:]
-                if let reverse = scrolling["reverse"] { s["reverse"] = reverse }
-                if let modifiers = scrolling["modifiers"] as? [String: Any] {
-                    var m: [String: Any] = [:]
-                    for axis in ["vertical", "horizontal"] {
-                        guard let actions = modifiers[axis] as? [String: Any] else { continue }
-                        let drops = actions.filter { ($0.value as? [String: Any])?["type"] as? String == "preventDefault" }
-                        if !drops.isEmpty { m[axis] = drops }
-                    }
-                    if !m.isEmpty { s["modifiers"] = m }
-                }
-                if !s.isEmpty { out["scrolling"] = s }
-            }
-            guard !out.isEmpty else { return nil }
-            if let condition = scheme["if"] { out["if"] = condition }
-            return out
-        }
-        return try JSONSerialization.data(withJSONObject: ["schemes": kept], options: [.prettyPrinted, .sortedKeys])
     }
 }
