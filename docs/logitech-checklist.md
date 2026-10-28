@@ -17,4 +17,5 @@ line says what to do and what must happen.
 6. Sleep the Mac, wake it: step 1 still holds.
 
 Run on 2026-10-27, M4 Max, macOS 27.0.1: step 1 (ownership, through System Events activating the probe and Finder)
-passed: `owner true`, `watching []`, `owner false`. Steps 1 (buttons) to 6: *pending*, by hand.
+passed: `owner true`, `watching []`, `owner false`. Step 3 passed on 2026-10-28 (probe in front, `launchctl kill SIGKILL`): `owner false`, `available false`, then
+`available true`, the device back, `owner true`. Steps 1 (buttons), 2, 4, 5, 6: *pending*, by hand.
