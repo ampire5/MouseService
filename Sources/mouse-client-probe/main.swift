@@ -44,6 +44,7 @@ setvbuf(stdout, nil, _IOLBF, 0)
         window = NSWindow(contentRect: NSRect(x: 200, y: 200, width: 480, height: 320), styleMask: [.titled, .closable],
                           backing: .buffered, defer: false)
         window.title = "mouse-client-probe"
+        window.level = .floating   // always above other windows: the pointer can be moved over it reliably
         window.makeKeyAndOrderFront(nil)
         NSApp.activate()
         let ms = { (time: Double) in String(format: "%.2f ms", (ProcessInfo.processInfo.systemUptime - time) * 1000) }

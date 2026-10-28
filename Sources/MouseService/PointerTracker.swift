@@ -4,7 +4,8 @@ import MouseCore
 /// The window under the pointer, for the clients' wheel areas (core spec, "Window under the pointer"). Active only
 /// while some client declared areas; then a global and a local monitor (listen only) see each move and scroll. While
 /// the point stays in the cached window frame only the point is reported; leaving it asks the window server which
-/// window is there now, and so do the end of a drag (the window may have moved with the pointer, or resized), a Space
+/// window is there now; inside it, the topmost window's number is asked at most every `probeInterval` (a window above
+/// the cached one, that the pointer moved onto inside its frame, would never be seen otherwise), and so do the end of a drag (the window may have moved with the pointer, or resized), a Space
 /// change and another app in front. Inactive, there are no monitors and nothing runs.
 @MainActor final class PointerTracker {
     private let onChange: (PointerPlace?) -> Void
@@ -13,6 +14,14 @@ import MouseCore
     private var cached: (window: Int, pid: pid_t, frame: CGRect)?
     private var reported: PointerPlace?
     private var spaceObserver: NSObjectProtocol?
+    /// How often the number of the window at the pointer is asked while the pointer stays inside the cached frame. Its
+    /// cost, measured 2026-10-28 on the M4 Max (macOS 27): 7 µs CPU and 25 µs wall per call, which is 0.1 % of a core
+    /// at the 125 calls a second this allows; at every move of a 1 kHz mouse it would be 0.7 % and 2.5 % blocked.
+    private static let probeInterval = 0.008
+    private var lastProbe = 0.0
+    /// The one check owed after moves that came inside the interval: a window that came above the cached one during the
+    /// last moves is still found once the pointer stops. It fires once and is gone: nothing runs at rest.
+    private var trailing: DispatchWorkItem?
 
     init(onChange: @escaping (PointerPlace?) -> Void) {
         self.onChange = onChange
@@ -27,6 +36,8 @@ import MouseCore
             spaceObserver = nil
             cached = nil
             reported = nil
+            trailing?.cancel()
+            trailing = nil
             return
         }
         let mask: NSEvent.EventTypeMask = [.mouseMoved, .leftMouseDragged, .rightMouseDragged, .otherMouseDragged,
@@ -57,7 +68,28 @@ import MouseCore
 
     private func check() {
         let point = NSEvent.mouseLocation
-        if cached.map({ !$0.frame.contains(point) }) ?? true { cached = Self.window(at: point) }
+        if let current = cached, current.frame.contains(point) {
+            let now = ProcessInfo.processInfo.systemUptime
+            if now - lastProbe >= Self.probeInterval {
+                lastProbe = now
+                trailing?.cancel()
+                trailing = nil
+                if NSWindow.windowNumber(at: point, belowWindowWithWindowNumber: 0) != current.window {
+                    cached = Self.window(at: point)
+                }
+            } else if trailing == nil {
+                let item = DispatchWorkItem { [weak self] in
+                    MainActor.assumeIsolated {
+                        self?.trailing = nil
+                        self?.check()
+                    }
+                }
+                trailing = item
+                DispatchQueue.main.asyncAfter(deadline: .now() + Self.probeInterval, execute: item)
+            }
+        } else {
+            cached = Self.window(at: point)
+        }
         let place = cached.map {
             PointerPlace(window: $0.window, pid: $0.pid,
                          point: CGPoint(x: point.x - $0.frame.minX, y: point.y - $0.frame.minY))

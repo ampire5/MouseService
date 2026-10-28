@@ -29,6 +29,10 @@ thread, XPC and the client's main thread. Target: under 2 ms (core spec, "Testin
 `swift run mouse-client-probe divert 0xC3 --wheel ratchet`, the mouse circling over windows for 10 s; the service's
 CPU from `top` as above. Only while a client declares wheel areas; otherwise no monitor exists.
 
+The topmost window's number is asked at most every 8 ms while the pointer stays inside the cached window's frame
+(without it, a window that comes above the cached one under the pointer is never seen): `NSWindow.windowNumber(at:)`
+cost 7 µs CPU and 25 µs wall per call on the M4 Max (macOS 27), 2026-10-28, so at most 0.1 % of a core.
+
 | Machine | Date | CPU while moving | Notes |
 |---|---|---|---|
 | MacBook Pro, M4 Max, macOS 27.0.1 | | *pending* | |
