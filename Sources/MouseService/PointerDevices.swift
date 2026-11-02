@@ -40,7 +40,7 @@ final class ScrollRules: Sendable {
 
     private struct Device {
         let id: UInt64
-        let service: IOHIDServiceClient
+        var service: any PointerDeviceService
         let identity: DeviceIdentity
         /// The property the acceleration goes to (`HIDPointerAccelerationType`).
         let accelerationKey: String
@@ -48,10 +48,15 @@ final class ScrollRules: Sendable {
         let original: (resolution: CFTypeRef?, acceleration: CFTypeRef?, linear: CFTypeRef?)
         /// What MouseService last wrote; nil: nothing, the device has its own values.
         var applied: PointerSettings?
+        /// A failed write must be retried even when the requested settings have not changed.
+        var needsApply = false
     }
 
-    private let client: IOHIDEventSystemClient?
+    private let services: () -> [any PointerDeviceService]?
+    private let rulesURL: URL
     private var devices: [UInt64: Device] = [:]
+    /// Keep originals through the immediate and delayed wake scans, even if HID briefly lists no services.
+    private var wakingDevices: [UInt64: Device] = [:]
     private var rules = DeviceRules.empty
     /// What is wrong with config.yaml; the rules read before stay in force.
     private var rulesError: String?
@@ -62,8 +67,15 @@ final class ScrollRules: Sendable {
     private var notifyPort: IONotificationPortRef?
     private var iterators: [io_iterator_t] = []
     private var rescanLater: DispatchWorkItem?
+    private var forceRescanLater = false
 
-    init() {
+    init(configURL: URL = PointerDevices.configURL, services: (() -> [any PointerDeviceService]?)? = nil) {
+        rulesURL = configURL
+        if let services {
+            self.services = services
+            return
+        }
+        let client: IOHIDEventSystemClient?
         // The public simple client cannot read the pointer properties; the full one can (checked 2026-10-27).
         typealias Create = @convention(c) (CFAllocator?) -> Unmanaged<IOHIDEventSystemClient>?
         if let iokit = dlopen("/System/Library/Frameworks/IOKit.framework/IOKit", RTLD_NOW),
@@ -73,6 +85,10 @@ final class ScrollRules: Sendable {
             client = nil
         }
         if client == nil { Self.log.error("IOHIDEventSystemClientCreate not found: pointer settings off") }
+        self.services = {
+            guard let client, let list = IOHIDEventSystemClientCopyServices(client) as? [AnyObject] else { return nil }
+            return list.compactMap { SystemPointerDeviceService(unsafeDowncast($0, to: IOHIDServiceClient.self)) }
+        }
     }
 
     func start() {
@@ -82,7 +98,7 @@ final class ScrollRules: Sendable {
         watchDevices()
         wakeObserver = NSWorkspace.shared.notificationCenter.addObserver(
             forName: NSWorkspace.didWakeNotification, object: nil, queue: .main) { [weak self] _ in
-            MainActor.assumeIsolated { self?.reapply(force: true) }
+            MainActor.assumeIsolated { self?.systemDidWake() }
         }
         frontmost = NSWorkspace.shared.frontmostApplication?.bundleIdentifier
         appObserver = NSWorkspace.shared.notificationCenter.addObserver(
@@ -91,6 +107,12 @@ final class ScrollRules: Sendable {
             MainActor.assumeIsolated { self?.activated(app) }
         }
         rescan()
+    }
+
+    func systemDidWake() {
+        Self.log.notice("System woke: refreshing pointer services and settings")
+        for (id, device) in devices where wakingDevices[id] == nil { wakingDevices[id] = device }
+        deviceListChanged(force: true)
     }
 
     private func activated(_ app: String?) {
@@ -164,7 +186,7 @@ final class ScrollRules: Sendable {
 
     /// A broken file keeps the rules in force and says so in the menu.
     private func loadRules() {
-        guard let data = try? Data(contentsOf: Self.configURL) else {
+        guard let data = try? Data(contentsOf: rulesURL) else {
             rules = .empty
             rulesError = "missing"
             return
@@ -185,7 +207,7 @@ final class ScrollRules: Sendable {
     private func watchConfig() {
         fileSource?.cancel()
         fileSource = nil
-        let fd = open(Self.configURL.path, O_EVTONLY)
+        let fd = open(rulesURL.path, O_EVTONLY)
         guard fd >= 0 else { return }
         let source = DispatchSource.makeFileSystemObjectSource(fileDescriptor: fd, eventMask: [.write, .delete, .rename],
                                                                queue: .main)
@@ -223,44 +245,46 @@ final class ScrollRules: Sendable {
         }
     }
 
-    private func deviceListChanged() {
-        rescan()
+    func deviceListChanged(force: Bool = false) {
+        rescan(force: force)
+        // Hotplug notifications during wake may reschedule the scan, but must not lose the forced reapply.
+        forceRescanLater = forceRescanLater || force
         rescanLater?.cancel()
-        let later = DispatchWorkItem { [weak self] in self?.rescan() }
+        let later = DispatchWorkItem { [weak self] in
+            guard let self else { return }
+            let force = forceRescanLater
+            forceRescanLater = false
+            rescanLater = nil
+            rescan(force: force)
+            wakingDevices.removeAll()
+        }
         rescanLater = later
         DispatchQueue.main.asyncAfter(deadline: .now() + 1, execute: later)
     }
 
-    private func rescan() {
-        guard let client, let list = IOHIDEventSystemClientCopyServices(client) as? [AnyObject] else { return }
+    func rescan(force: Bool = false) {
+        guard let list = services() else { return }
         var seen = Set<UInt64>()
-        for object in list {
-            let service = unsafeDowncast(object, to: IOHIDServiceClient.self)
-            guard let id = (IOHIDServiceClientGetRegistryID(service) as? NSNumber)?.uint64Value else { continue }
-            let category: DeviceIdentity.Category
-            if IOHIDServiceClientConformsTo(service, 0x0D, 0x05) != 0 {
-                category = .trackpad
-            } else if IOHIDServiceClientConformsTo(service, 0x01, 0x02) != 0 {
-                category = .mouse
-            } else {
+        for service in list {
+            let id = service.id
+            seen.insert(id)
+            if var device = devices[id] ?? wakingDevices[id] {
+                // A resumed service may have the same registry ID but a new client handle. Keep the original
+                // properties: reading them again here could capture our own previously applied settings.
+                device.service = service
+                devices[id] = device
                 continue
             }
-            seen.insert(id)
-            guard devices[id] == nil else { continue }
-            func property(_ key: String) -> CFTypeRef? { IOHIDServiceClientCopyProperty(service, key as CFString) }
-            let identity = DeviceIdentity(vendorID: (property("VendorID") as? Int) ?? 0,
-                                          productID: (property("ProductID") as? Int) ?? 0,
-                                          productName: property("Product") as? String,
-                                          serialNumber: property("SerialNumber") as? String, category: category)
-            let accelerationKey = (property("HIDPointerAccelerationType") as? String) ?? "HIDMouseAcceleration"
+            let identity = service.identity
+            let accelerationKey = service.accelerationKey
             devices[id] = Device(id: id, service: service, identity: identity, accelerationKey: accelerationKey,
-                                 original: (property("HIDPointerResolution"), property(accelerationKey),
-                                            property("HIDUseLinearScalingMouseAcceleration")),
+                                 original: (service.property("HIDPointerResolution"), service.property(accelerationKey),
+                                            service.property("HIDUseLinearScalingMouseAcceleration")),
                                  applied: nil)
-            Self.log.info("Device \(identity.productName ?? "?", privacy: .public) \(String(format: "%04x:%04x", identity.vendorID, identity.productID), privacy: .public) \(category.rawValue, privacy: .public)")
+            Self.log.info("Device \(identity.productName ?? "?", privacy: .public) \(String(format: "%04x:%04x", identity.vendorID, identity.productID), privacy: .public) \(identity.category.rawValue, privacy: .public)")
         }
         for id in devices.keys where !seen.contains(id) { devices[id] = nil }
-        reapply(force: false)
+        reapply(force: force)
     }
 
     /// Every device's pointer settings and the scroll snapshot from the rules and the frontmost app.
@@ -272,7 +296,7 @@ final class ScrollRules: Sendable {
             if resolved.scroll != .none { scroll[id] = resolved.scroll }
             if resolved.pointer.isEmpty {
                 if device.applied != nil { restore(id) }
-            } else if force || resolved.pointer != device.applied {
+            } else if force || device.needsApply || resolved.pointer != device.applied {
                 write(resolved.pointer, to: id)
             }
         }
@@ -282,9 +306,11 @@ final class ScrollRules: Sendable {
     private func write(_ settings: PointerSettings, to id: UInt64) {
         guard var device = devices[id] else { return }
         let s = device.service
+        var succeeded = true
         func set(_ key: String, _ value: CFTypeRef?) {
             guard let value else { return }
-            if !IOHIDServiceClientSetProperty(s, key as CFString, value) {
+            if !s.setProperty(key, value) {
+                succeeded = false
                 Self.log.error("Could not set \(key, privacy: .public) on \(device.identity.productName ?? "?", privacy: .public)")
             }
         }
@@ -310,6 +336,7 @@ final class ScrollRules: Sendable {
             set(device.accelerationKey, device.original.acceleration)
         }
         device.applied = settings
+        device.needsApply = !succeeded
         devices[id] = device
         Self.log.info("\(device.identity.productName ?? "?", privacy: .public): speed \(settings.speed ?? -1) acceleration \(settings.acceleration ?? -1)")
     }
@@ -317,10 +344,11 @@ final class ScrollRules: Sendable {
     private func restore(_ id: UInt64) {
         guard var device = devices[id], device.applied != nil else { return }
         let s = device.service
-        if let v = device.original.linear { IOHIDServiceClientSetProperty(s, "HIDUseLinearScalingMouseAcceleration" as CFString, v) }
-        if let v = device.original.resolution { IOHIDServiceClientSetProperty(s, "HIDPointerResolution" as CFString, v) }
-        if let v = device.original.acceleration { IOHIDServiceClientSetProperty(s, device.accelerationKey as CFString, v) }
+        if let v = device.original.linear { _ = s.setProperty("HIDUseLinearScalingMouseAcceleration", v) }
+        if let v = device.original.resolution { _ = s.setProperty("HIDPointerResolution", v) }
+        if let v = device.original.acceleration { _ = s.setProperty(device.accelerationKey, v) }
         device.applied = nil
+        device.needsApply = false
         devices[id] = device
     }
 }

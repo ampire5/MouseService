@@ -37,6 +37,7 @@ let package = Package(
         .executableTarget(name: "mouse-client-probe", dependencies: ["MouseClient", "MouseContract"]),
         .testTarget(name: "GestureCoreTests", dependencies: ["GestureCore"]),
         .testTarget(name: "PointerCoreTests", dependencies: ["PointerCore"], resources: [.copy("Fixtures")]),
+        .testTarget(name: "MouseServiceTests", dependencies: ["MouseService", "PointerCore"]),
         .testTarget(name: "MouseContractTests", dependencies: ["MouseContract"]),
         .testTarget(name: "MouseCoreTests", dependencies: ["MouseCore", "MouseContract"]),
         .testTarget(name: "MouseServiceKitTests", dependencies: ["MouseServiceKit", "MouseClient", "MouseCore",
