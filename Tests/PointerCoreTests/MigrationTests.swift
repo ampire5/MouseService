@@ -2,7 +2,7 @@ import Foundation
 import Testing
 @testable import PointerCore
 
-/// Every device in the old rules × no app and every app named anywhere: the migrated file resolves as the old rules.
+/// Migration preserves explicit fields; absent mouse sensitivity fields use the new baseline.
 private func expectEquivalent(_ legacy: LegacyDeviceRules, sourceLocation: SourceLocation = #_sourceLocation) throws {
     let yaml = DevicesMigration.yaml(from: legacy)
     let rules = try DeviceRules(yaml: yaml)
@@ -10,13 +10,18 @@ private func expectEquivalent(_ legacy: LegacyDeviceRules, sourceLocation: Sourc
     #expect(!legacy.identities.isEmpty, sourceLocation: sourceLocation)
     for device in legacy.identities {
         for app in apps {
-            #expect(rules.resolve(device, app: app) == legacy.resolve(device, app: app),
+            var expected = legacy.resolve(device, app: app)
+            if device.category == .mouse {
+                if expected.pointer.speed == nil { expected.pointer.speed = 0.125 }
+                if expected.pointer.acceleration == nil { expected.pointer.acceleration = 0.225 }
+            }
+            #expect(rules.resolve(device, app: app) == expected,
                     "\(device.productName ?? "?") \(app ?? "-")", sourceLocation: sourceLocation)
         }
     }
-    // A device that is not in the file gets nothing in either.
+    // An unknown mouse receives the baseline too.
     let stranger = DeviceIdentity(vendorID: 0x1915, productID: 0xeeee, category: .mouse)
-    #expect(rules.resolve(stranger, app: nil) == ResolvedRules(), sourceLocation: sourceLocation)
+    #expect(rules.resolve(stranger, app: nil) == DeviceRules.empty.resolve(stranger, app: nil), sourceLocation: sourceLocation)
 }
 
 @Test func migrationOfTheFixtureIsExact() throws {

@@ -156,6 +156,10 @@ public struct DeviceRules: Sendable {
 
     public func resolve(_ device: DeviceIdentity, app: String?) -> ResolvedRules {
         var result = ResolvedRules()
+        // Baseline sensitivity for mice; trackpads retain their system settings. YAML fields override it below.
+        if device.category == .mouse {
+            result.pointer = PointerSettings(speed: 0.125, acceleration: 0.225)
+        }
         for entry in entries where entry.matches(device) {
             entry.fields.apply(to: &result)
             if let app, let fields = entry.apps[app] { fields.apply(to: &result) }

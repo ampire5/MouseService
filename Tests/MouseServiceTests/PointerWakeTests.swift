@@ -138,3 +138,25 @@ import PointerCore
     #expect((after.properties["HIDMouseAcceleration"] as? NSNumber)?.intValue == 65536)
     #expect((after.properties["HIDPointerResolution"] as? NSNumber)?.intValue == 26214400)
 }
+
+@Test @MainActor func freshInstallCreatesConfigAndAppliesSavedOverrides() async throws {
+    let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+    let url = directory.appendingPathComponent("config.yaml")
+    defer { try? FileManager.default.removeItem(at: directory) }
+    let mouse = HIDService(100)
+    let pointer = PointerDevices(configURL: url, services: { [mouse] })
+    pointer.start()
+    defer { pointer.restoreAll() }
+    try #require(FileManager.default.fileExists(atPath: url.path))
+    #expect((mouse.properties["HIDMouseAcceleration"] as? NSNumber)?.intValue == 14745)
+    try """
+    devices:
+      Mouse: { id: "1234:5678", speed: 0.5, acceleration: 0.25 }
+    """.write(to: url, atomically: true, encoding: .utf8)
+    for _ in 0..<100 {
+        if (mouse.properties["HIDMouseAcceleration"] as? NSNumber)?.intValue == 16384 { break }
+        try await Task.sleep(for: .milliseconds(20))
+    }
+    #expect((mouse.properties["HIDMouseAcceleration"] as? NSNumber)?.intValue == 16384)
+    #expect((mouse.properties["HIDPointerResolution"] as? NSNumber)?.intValue == 5073754)
+}

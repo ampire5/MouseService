@@ -151,3 +151,27 @@ devices:
     let rules = try DeviceRules(yaml: "devices:\n  A:\n    id: 46d:c548\n    color: red\n    apps:\n      x: { size: 1 }\nextra: 1\n")
     #expect(rules.ignoredFields == ["devices.A.color", "devices.A.apps.x.size", "extra"])
 }
+
+@Test func miceHaveDefaultSensitivityWithoutConfiguration() throws {
+    for rules in [DeviceRules.empty, try DeviceRules(yaml: ""), try DeviceRules(yaml: "devices:\n")] {
+        #expect(rules.resolve(mxMaster4, app: nil).pointer == PointerSettings(speed: 0.125, acceleration: 0.225))
+        let otherMouse = DeviceIdentity(vendorID: 0x1234, productID: 0x5678, category: .mouse)
+        #expect(rules.resolve(otherMouse, app: "com.example.App").pointer
+                == PointerSettings(speed: 0.125, acceleration: 0.225))
+        #expect(rules.resolve(internalTrackpad, app: nil).pointer == PointerSettings())
+    }
+}
+
+@Test func explicitSensitivityOverridesMouseDefaults() throws {
+    let rules = try DeviceRules(yaml: """
+    devices:
+      Mouse:
+        id: 46d:c548
+        speed: 0
+        apps:
+          com.example.App: { acceleration: 0, disable-acceleration: true }
+    """)
+    #expect(rules.resolve(mxMaster4, app: nil).pointer == PointerSettings(speed: 0, acceleration: 0.225))
+    #expect(rules.resolve(mxMaster4, app: "com.example.App").pointer
+            == PointerSettings(speed: 0, acceleration: 0, disableAcceleration: true))
+}

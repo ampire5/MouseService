@@ -92,7 +92,8 @@ final class ScrollRules: Sendable {
     }
 
     func start() {
-        migrateIfNeeded()
+        if rulesURL == Self.configURL { migrateIfNeeded() }
+        Self.ensureConfigFile(at: rulesURL)
         loadRules()
         watchConfig()
         watchDevices()
@@ -156,7 +157,7 @@ final class ScrollRules: Sendable {
     }
 
     /// The file `Edit Devices Config…` opens: made with a short example when there is none.
-    static func ensureConfigFile() {
+    static func ensureConfigFile(at configURL: URL = PointerDevices.configURL) {
         guard !FileManager.default.fileExists(atPath: configURL.path) else { return }
         try? FileManager.default.createDirectory(at: configURL.deletingLastPathComponent(), withIntermediateDirectories: true)
         try? Self.template.write(to: configURL, atomically: true, encoding: .utf8)

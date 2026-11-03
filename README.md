@@ -26,7 +26,55 @@ Master 4 is handled over HID++ through [LogiHIDPP](https://github.com/ampire5/Lo
 
 Needs macOS 26 and the Accessibility permission (for the gestures and the scroll rules).
 
-## Build and install
+## Install with Homebrew
+
+```sh
+brew install --cask ampire5/tap/mouseservice
+open /Applications/MouseService.app
+```
+
+The first launch registers the service for your login account; it starts automatically at login and restarts after a
+crash. Allow **MouseService** in **System Settings → Privacy & Security → Accessibility** for gestures and scroll
+rules. Do not run it with `sudo`. If you previously installed a build in `~/Applications`, quit it and remove that
+old app first; opening the Homebrew copy registers the new location.
+
+The app is signed ad hoc, without an Apple Developer ID. The cask removes its quarantine flag. After an upgrade,
+macOS may require you to remove and re-add MouseService in Accessibility.
+
+```sh
+brew update
+brew upgrade --cask mouseservice
+open /Applications/MouseService.app  # restart the agent with the upgraded app
+```
+
+### Default sensitivity
+
+All mice start with pointer **speed 0.125** (0–1 scale) and **acceleration 0.225** (0–40 scale). Trackpads retain their
+system settings. Device and app entries in `~/.config/mouseservice/config.yaml` override these values; existing
+explicit settings are preserved. Scroll direction and modifier rules remain configurable separately.
+
+For example, use **Edit Devices Config…** in the menu and add your device ID (shown in the device list):
+
+```yaml
+devices:
+  Example mouse:
+    id: 1234:5678
+    speed: 0.2
+    acceleration: 0.1
+    # disable-acceleration: true
+```
+
+### Uninstall
+
+```sh
+brew uninstall --cask mouseservice
+# To also remove saved preferences and device rules:
+# brew uninstall --cask --zap mouseservice
+```
+
+Homebrew stops and unregisters the agent when removing the app. Normal uninstall keeps your settings.
+
+## Build from source
 
 ```sh
 swift test
