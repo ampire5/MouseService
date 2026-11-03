@@ -160,3 +160,22 @@ import PointerCore
     #expect((mouse.properties["HIDMouseAcceleration"] as? NSNumber)?.intValue == 16384)
     #expect((mouse.properties["HIDPointerResolution"] as? NSNumber)?.intValue == 5073754)
 }
+
+@Test @MainActor func asynchronousReloadAppliesNewRulesAndKeepsLastValidRulesOnError() async throws {
+    let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+    defer { try? FileManager.default.removeItem(at: directory) }
+    try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+    let url = directory.appendingPathComponent("config.yaml")
+    let mouse = HIDService(200)
+    let pointer = PointerDevices(configURL: url, services: { [mouse] })
+    pointer.rescan()
+    defer { pointer.restoreAll() }
+    try "devices:\n  Mouse: { id: '1234:5678', acceleration: 0.25 }\n"
+        .write(to: url, atomically: true, encoding: .utf8)
+    await pointer.reloadFromDisk()
+    #expect((mouse.properties["HIDMouseAcceleration"] as? NSNumber)?.intValue == 16384)
+    try "devices: [".write(to: url, atomically: true, encoding: .utf8)
+    await pointer.reloadFromDisk()
+    #expect((mouse.properties["HIDMouseAcceleration"] as? NSNumber)?.intValue == 16384)
+    #expect(pointer.summary.hasPrefix("config.yaml:"))
+}

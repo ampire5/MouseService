@@ -30,12 +30,17 @@ import SettingsKit
     private var frontmostTracker: FrontmostTracker?
     private let settings = ServiceSettings()
     private var settingsWindow: SettingsWindowController?
-    private static let gesturesKey = "gesturesOn"
+    private lazy var deviceSettings: DeviceSettingsController = {
+        let controller = DeviceSettingsController(file: DevicePreferencesFile(url: PointerDevices.configURL),
+                                                  preferences: settings)
+        controller.connectedDevices = { [weak self] in self?.pointer.connectedDevices ?? [] }
+        controller.didSave = { [weak self] in
+            Task { await self?.pointer.reloadFromDisk() }
+        }
+        return controller
+    }()
 
-    private var gesturesOn: Bool {
-        get { UserDefaults.standard.object(forKey: Self.gesturesKey) as? Bool ?? true }
-        set { UserDefaults.standard.set(newValue, forKey: Self.gesturesKey) }
-    }
+    private var gesturesOn: Bool { settings.gesturesEnabled }
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         guard ProcessInfo.processInfo.environment["XPC_SERVICE_NAME"] == Self.label else {
@@ -57,6 +62,10 @@ import SettingsKit
         if !AXIsProcessTrusted() {
             let prompt = "AXTrustedCheckOptionPrompt"   // kAXTrustedCheckOptionPrompt, a global var Swift 6 refuses
             AXIsProcessTrustedWithOptions([prompt: true] as CFDictionary)
+        }
+        pointer.onSettingsChange = { [weak self] in
+            guard let self, self.settingsWindow?.window?.isVisible == true else { return }
+            Task { await self.deviceSettings.refresh() }
         }
         pointer.start()
         updateTap()
@@ -92,6 +101,7 @@ import SettingsKit
             driver.setHapticStrength(settings.hapticStrength)
             driver.setPanelForce(settings.panelForce)
             service?.setGlobalMode(settings.wheelMode)
+            self.updateTap()
         }
         listener = Listener(machService: MouseClient.serviceName, service: service)
         // Clients that lost a service wait for this rather than wake it themselves (a quit service stays quit).
@@ -232,8 +242,7 @@ import SettingsKit
     @objc private func releaseAll() { service?.releaseAll() }
 
     @objc private func toggleGestures() {
-        gesturesOn.toggle()
-        updateTap()
+        try? settings.setValue(gesturesOn ? "no" : "yes", forKey: ServiceSettings.gesturesKey)
     }
 
     @objc private func editDevicesConfig() {
@@ -242,7 +251,7 @@ import SettingsKit
     }
 
     @objc private func reloadDevicesConfig() {
-        pointer.reload()
+        Task { await pointer.reloadFromDisk() }
     }
 
     @objc private func openAccessibility() {
@@ -250,12 +259,16 @@ import SettingsKit
     }
 
     @objc private func openSettings() {
-        let window = settingsWindow ?? SettingsWindowController(pages: ServiceSettings.pages,
+        NSApp.appearance = NSAppearance(named: .darkAqua)
+        let window = settingsWindow ?? SettingsWindowController(pages: deviceSettings.pages,
                                                                 model: SettingsModel(store: settings),
                                                                 autosaveName: "MouseServiceSettings",
                                                                 lastPageDefaultsKey: "SettingsLastPage")
+        // The existing glass backdrop is dark; keep its text and controls in the matching appearance.
+        window.window?.appearance = NSAppearance(named: .darkAqua)
         settingsWindow = window
         NSApp.activate()
         window.show(page: nil)
+        Task { await deviceSettings.refresh() }
     }
 }

@@ -9,9 +9,31 @@ import SettingsKit
     static let hapticStrengthKey = "haptic-strength"
     static let panelForceKey = "mx-panel-force"
     static let wheelModeKey = "wheel-mode"
+    static let gesturesKey = "gesturesOn"
+
+    private let storage: UserDefaults
+    init(defaults: UserDefaults = .standard) { storage = defaults }
+
+    var gesturesEnabled: Bool {
+        if let value = storage.object(forKey: Self.gesturesKey) as? Bool { return value }
+        return storage.string(forKey: Self.gesturesKey) != "no"
+    }
+
+    var exportedValues: [String: String] {
+        SettingsTransfer.preferenceDefaults.keys.reduce(into: [String: String]()) { values, key in
+            values[key] = value(forKey: key) ?? defaultValue(forKey: key)
+        }
+    }
+
+    func applyImportedValues(_ values: [String: String]) {
+        for (key, value) in values { storage.set(value, forKey: key) }
+        NotificationCenter.default.post(name: .settingsStoreDidChange, object: self,
+                                       userInfo: ["keys": Array(values.keys)])
+        onChange?()
+    }
 
     var onChange: (() -> Void)?
-    private let defaults: [String: String] = [hapticStrengthKey: "keep", panelForceKey: "0", wheelModeKey: "ratchet"]
+    private let defaults = SettingsTransfer.preferenceDefaults
 
     /// nil: keep the mouse's own strength.
     var hapticStrength: UInt8? {
@@ -27,30 +49,24 @@ import SettingsKit
         (value(forKey: Self.wheelModeKey) ?? defaultValue(forKey: Self.wheelModeKey)) == "free-spin" ? .freeSpin : .ratchet
     }
 
-    func value(forKey key: String) -> String? { UserDefaults.standard.string(forKey: key) }
+    func value(forKey key: String) -> String? {
+        if key == Self.gesturesKey { return gesturesEnabled ? "yes" : "no" }
+        return storage.string(forKey: key)
+    }
     func defaultValue(forKey key: String) -> String { defaults[key] ?? "" }
 
     func validate(_ value: String, forKey key: String) -> String? {
-        switch key {
-        case Self.hapticStrengthKey:
-            value.lowercased() == "keep" || Int(value).map({ (0...100).contains($0) }) == true ? nil : "0–100 or keep"
-        case Self.panelForceKey:
-            PanelForce.parse(value) == nil ? "0–100, default or keep" : nil
-        case Self.wheelModeKey:
-            ["ratchet", "free-spin"].contains(value) ? nil : "ratchet or free-spin"
-        default:
-            nil
-        }
+        SettingsTransfer.validate(value, key: key)
     }
 
     func setValue(_ value: String, forKey key: String) throws {
-        UserDefaults.standard.set(value.lowercased() == "keep" ? "keep" : value, forKey: key)
+        storage.set(value.lowercased() == "keep" ? "keep" : value, forKey: key)
         NotificationCenter.default.post(name: .settingsStoreDidChange, object: self, userInfo: ["keys": [key]])
         onChange?()
     }
 
     func removeValues(forKeys keys: [String]) throws {
-        for key in keys { UserDefaults.standard.removeObject(forKey: key) }
+        for key in keys { storage.removeObject(forKey: key) }
         NotificationCenter.default.post(name: .settingsStoreDidChange, object: self, userInfo: ["keys": keys])
         onChange?()
     }
@@ -64,6 +80,11 @@ import SettingsKit
                 .number(panelForceKey, "Panel force", step: 5, symbol: "hand.point.down",
                         description: "How hard the haptic panel must be pressed: 0 the lightest the mouse takes, 100 "
                             + "the stiffest; default writes the factory value, keep leaves it alone. Default 0."),
+            ]),
+            SettingsSection("Gestures", rows: [
+                .toggle(gesturesKey, "Side-button gestures", symbol: "hand.draw",
+                        description: "Click Back or Forward to swipe a page. Hold Back and drag sideways to switch "
+                            + "Spaces, up for Mission Control, or down for App Exposé. Requires Accessibility."),
             ]),
             SettingsSection("Wheel", rows: [
                 .choice(wheelModeKey, "Wheel mode", [("ratchet", "Ratchet"), ("free-spin", "Free spin")],

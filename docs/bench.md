@@ -37,3 +37,11 @@ cost 7 µs CPU and 25 µs wall per call on the M4 Max (macOS 27), 2026-10-28, so
 |---|---|---|---|
 | MacBook Pro, M4 Max, macOS 27.0.1 | | *pending* | |
 | Intel Mac | | | |
+
+## Settings UI, 2026-11-03
+
+Opt-in real-window check: `MOUSESERVICE_UI_BENCH=1 swift test --filter settingsWindowResponsiveness`.
+On Apple Silicon, main-thread CPU: first creation/show 110–117 ms; first page visits 8–16 ms; repeated visits
+2–4 ms across four rounds without growth. Measured with `CLOCK_THREAD_CPUTIME_ID`. Intel execution was not available;
+the release contains both arm64 and x86_64 slices. File reads, YAML parsing for interactive reload, and writes run
+off the main actor. Ordinary tests do not open the settings window.

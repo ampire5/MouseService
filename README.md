@@ -47,6 +47,21 @@ brew upgrade --cask mouseservice
 open /Applications/MouseService.app  # restart the agent with the upgraded app
 ```
 
+### Settings
+
+Open **Settings…** from the MouseService menu. **Devices** lists connected devices and saved configurations:
+choose a device, then adjust speed, acceleration, scroll reversal and the modifier keys that suppress scrolling.
+Changes apply immediately. Trackpads keep their system sensitivity until you explicitly change it.
+
+**Mouse** includes side-button gestures, haptic strength, panel force and wheel mode. The Gestures menu toggle
+and Settings control stay synchronized. Accessibility permission is required for gestures and scroll rules.
+
+**Import & Export** transfers device rules and service preferences in one JSON file. Each import validates the
+whole file before making changes and saves the previous configuration and preferences beside `config.yaml` as
+`config.yaml.before-import-<unique-id>.json`. The first UI edit also saves the original YAML as `config.yaml.before-ui`.
+YAML formatting and comments may be normalized; device values, application rules and unknown fields are preserved.
+Application rules remain supported in YAML but have no UI in this version.
+
 ### Default sensitivity
 
 All mice start with pointer **speed 0.125** (0–1 scale) and **acceleration 0.225** (0–40 scale). Trackpads retain their

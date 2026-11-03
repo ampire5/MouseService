@@ -22,6 +22,10 @@ final class ScrollRules: Sendable {
 /// source when the config changes.
 @MainActor final class PointerDevices {
     let scrollRules = ScrollRules()
+    var onSettingsChange: (() -> Void)?
+    var connectedDevices: [DeviceIdentity] { devices.values.map(\.identity).sorted {
+        ($0.productName ?? "") < ($1.productName ?? "")
+    } }
     /// For the menu: how many schemes and devices, or what is wrong with the file.
     var summary: String {
         if let rulesError { return "config.yaml: \(rulesError)" }
@@ -60,6 +64,7 @@ final class ScrollRules: Sendable {
     private var rules = DeviceRules.empty
     /// What is wrong with config.yaml; the rules read before stay in force.
     private var rulesError: String?
+    private var loadGeneration = 0
     private var frontmost: String?
     private var appObserver: NSObjectProtocol?
     private var wakeObserver: NSObjectProtocol?
@@ -124,8 +129,32 @@ final class ScrollRules: Sendable {
 
     /// Reads the file again and writes every device's settings anew (another program may have changed them).
     func reload() {
+        loadGeneration += 1
         loadRules()
         reapply(force: true)
+        onSettingsChange?()
+    }
+
+    /// The interactive/file-watcher path parses away from the main actor, then applies only the newest result.
+    func reloadFromDisk() async {
+        loadGeneration += 1
+        let request = loadGeneration
+        let url = rulesURL
+        do {
+            let parsed = try await Task.detached(priority: .utility) {
+                let data = try Data(contentsOf: url)
+                return try DeviceRules(yaml: String(decoding: data, as: UTF8.self))
+            }.value
+            guard request == loadGeneration else { return }
+            rules = parsed
+            rulesError = nil
+            reapply(force: true)
+            onSettingsChange?()
+        } catch {
+            guard request == loadGeneration else { return }
+            rulesError = error.localizedDescription
+            onSettingsChange?()
+        }
     }
 
     /// Gives every device the values it had before MouseService: at quit.
@@ -215,8 +244,9 @@ final class ScrollRules: Sendable {
         source.setEventHandler { [weak self] in
             let replaced = !source.data.isDisjoint(with: [.delete, .rename])
             MainActor.assumeIsolated {
-                self?.reload()
-                if replaced { self?.watchConfig() }
+                guard let self else { return }
+                if replaced { self.watchConfig() }
+                Task { await self.reloadFromDisk() }
             }
         }
         source.setCancelHandler { close(fd) }
@@ -264,6 +294,7 @@ final class ScrollRules: Sendable {
     }
 
     func rescan(force: Bool = false) {
+        defer { onSettingsChange?() }
         guard let list = services() else { return }
         var seen = Set<UInt64>()
         for service in list {
