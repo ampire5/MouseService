@@ -112,13 +112,33 @@ final class ScrollRules: Sendable {
             let app = (note.userInfo?[NSWorkspace.applicationUserInfoKey] as? NSRunningApplication)?.bundleIdentifier
             MainActor.assumeIsolated { self?.activated(app) }
         }
-        rescan()
+        // At login the event system can still be publishing services from devices already in the registry.
+        deviceListChanged()
     }
 
     func systemDidWake() {
         Self.log.notice("System woke: refreshing pointer services and settings")
         for (id, device) in devices where wakingDevices[id] == nil { wakingDevices[id] = device }
         deviceListChanged(force: true)
+    }
+
+    func stop() {
+        loadGeneration += 1
+        rescanLater?.cancel()
+        rescanLater = nil
+        forceRescanLater = false
+        let center = NSWorkspace.shared.notificationCenter
+        if let wakeObserver { center.removeObserver(wakeObserver) }
+        if let appObserver { center.removeObserver(appObserver) }
+        wakeObserver = nil
+        appObserver = nil
+        fileSource?.cancel()
+        fileSource = nil
+        if let notifyPort { IONotificationPortDestroy(notifyPort) }
+        notifyPort = nil
+        for iterator in iterators { IOObjectRelease(iterator) }
+        iterators.removeAll()
+        restoreAll()
     }
 
     private func activated(_ app: String?) {
@@ -256,8 +276,8 @@ final class ScrollRules: Sendable {
 
     // MARK: Devices
 
-    /// IOKit tells when a HID device comes or goes; the event system lists its services a moment later, so the list is
-    /// read now and once more after a second.
+    /// Watch the services that send scroll events. A physical IOHIDDevice can appear before its event service,
+    /// especially at login. The event system can take another moment to list it, so scan now and after a second.
     private func watchDevices() {
         guard let port = IONotificationPortCreate(kIOMainPortDefault) else { return }
         notifyPort = port
@@ -270,7 +290,12 @@ final class ScrollRules: Sendable {
         }
         for type in [kIOFirstMatchNotification, kIOTerminatedNotification] {
             var iterator: io_iterator_t = 0
-            IOServiceAddMatchingNotification(port, type, IOServiceMatching("IOHIDDevice"), callback, me, &iterator)
+            let result = IOServiceAddMatchingNotification(port, type, IOServiceMatching("IOHIDEventService"),
+                                                          callback, me, &iterator)
+            guard result == KERN_SUCCESS else {
+                Self.log.error("Could not watch HID event services: \(result)")
+                continue
+            }
             while case let object = IOIteratorNext(iterator), object != 0 { IOObjectRelease(object) }   // arms it
             iterators.append(iterator)
         }

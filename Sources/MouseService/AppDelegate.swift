@@ -75,7 +75,7 @@ import SettingsKit
     func applicationWillTerminate(_ notification: Notification) {
         tap?.stop()
         scrollTap?.stop()
-        pointer.restoreAll()
+        pointer.stop()
         driver?.releaseAllSync()
         CGAssociateMouseAndMouseCursorPosition(1)
     }

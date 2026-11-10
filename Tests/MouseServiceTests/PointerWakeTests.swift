@@ -26,8 +26,7 @@ import PointerCore
     }
 }
 
-@MainActor private func configuredPointer(_ services: @escaping () -> [any PointerDeviceService]?) throws -> PointerDevices {
-    let url = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString + ".yaml")
+private func writePointerConfig(to url: URL) throws {
     try """
     devices:
       Mouse:
@@ -36,11 +35,33 @@ import PointerCore
         acceleration: 0.25
         reverse-scroll: vertical
     """.write(to: url, atomically: true, encoding: .utf8)
+}
+
+@MainActor private func configuredPointer(_ services: @escaping () -> [any PointerDeviceService]?) throws -> PointerDevices {
+    let url = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString + ".yaml")
+    try writePointerConfig(to: url)
     defer { try? FileManager.default.removeItem(at: url) }
     let pointer = PointerDevices(configURL: url, services: services)
     pointer.reload()
     pointer.rescan()
     return pointer
+}
+
+@Test @MainActor func startupFindsScrollDevicePublishedAfterFirstScan() async throws {
+    let url = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString + ".yaml")
+    try writePointerConfig(to: url)
+    defer { try? FileManager.default.removeItem(at: url) }
+    let service = HIDService(20)
+    var current: [any PointerDeviceService] = []
+    let pointer = PointerDevices(configURL: url, services: { current })
+    pointer.start()
+    defer { pointer.stop() }
+    #expect(pointer.scrollRules.isEmpty)
+
+    current = [service]
+    try await Task.sleep(for: .milliseconds(1250))
+    #expect(pointer.scrollRules.rule(for: 20)?.decide(deltaX: 0, deltaY: 3, flags: [])
+        == .negate(x: false, y: true))
 }
 
 @Test @MainActor func wakeRefreshesScrollSenderAndPointerService() throws {
