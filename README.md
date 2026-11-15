@@ -14,6 +14,7 @@ Master 4 is handled over HID++ through [LogiHIDPP](https://github.com/ampire5/Lo
   - A client that crashes releases everything at once. A service that crashes is restarted by launchd, and the
     clients come back.
   - The mouse's own settings (haptic strength, panel force) live in the service's Settings.
+  - Open the MouseService menu to see the MX Master 4's battery percentage and charging status over Logi Bolt.
   - Design: `docs/superpowers/specs/2026-10-27-core-service-design.md`.
 - **The side buttons as a trackpad.**
   - A click of back or forward is a page swipe.

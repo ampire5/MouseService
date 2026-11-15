@@ -1,13 +1,13 @@
 {
-  "originHash" : "1a9827516549fe434f56573c2be2eb326f6a4caa148fa4dffd5e849bfa881069",
+  "originHash" : "422cf5ccc9b2b8a00e9744a4255c6622a8a5a42683615ba7ad9fd0f8985e9eef",
   "pins" : [
     {
       "identity" : "logihidpp",
       "kind" : "remoteSourceControl",
       "location" : "https://github.com/ampire5/LogiHIDPP.git",
       "state" : {
-        "revision" : "0c6849480ac0ea46c0bf5e7727d9eb77b49c7ed0",
-        "version" : "0.1.0"
+        "revision" : "082ceaa5847917389426a927397d18b47b400b15",
+        "version" : "0.1.2"
       }
     },
     {

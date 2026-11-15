@@ -19,6 +19,7 @@ import SettingsKit
     static let agentPlist = "local.mouseservice.plist"
 
     private var statusItem: NSStatusItem?
+    private weak var mouseStatusItem: NSMenuItem?
     private let synth = TouchSynth()
     private var tap: SideButtonTap?
     private let pointer = PointerDevices()
@@ -84,6 +85,7 @@ import SettingsKit
 
     private func startService() {
         let driver = LogiMouseDriver(hapticStrength: settings.hapticStrength, panelForce: settings.panelForce)
+        driver.onBatteryChange = { [weak self] in self?.updateMouseStatus() }
         let version = Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? "?"
         let service = Service(driver: driver, version: version, globalMode: settings.wheelMode)
         // A SmartShift press where no app asks for a mode is the user's choice: kept as the setting.
@@ -182,10 +184,27 @@ import SettingsKit
 
     // MARK: Menu
 
+    private func updateMouseStatus() {
+        guard let mouseStatusItem else { return }
+        guard let driver, driver.device.present else {
+            mouseStatusItem.title = "No Logitech mouse"
+            return
+        }
+        guard let battery = driver.battery else {
+            mouseStatusItem.title = "MX Master: connected"
+            return
+        }
+        let charge = "MX Master · \(battery.percent)%"
+        mouseStatusItem.title = battery.isCharging ? "\(charge) · Charging" : charge
+    }
+
     func menuNeedsUpdate(_ menu: NSMenu) {
         menu.removeAllItems()
-        menu.addItem(NSMenuItem(title: driver?.device.present == true ? "MX Master: connected" : "No Logitech mouse",
-                                action: nil, keyEquivalent: ""))
+        let mouseStatus = NSMenuItem(title: "", action: nil, keyEquivalent: "")
+        menu.addItem(mouseStatus)
+        mouseStatusItem = mouseStatus
+        updateMouseStatus()
+        driver?.refreshBattery()
         let clients = service?.clients ?? []
         let clientsItem = NSMenuItem(title: clients.isEmpty ? "No clients" : "Clients", action: nil, keyEquivalent: "")
         if !clients.isEmpty {
@@ -231,6 +250,10 @@ import SettingsKit
         menu.addItem(item("Settings…", #selector(openSettings)))
         menu.addItem(NSMenuItem(title: "Quit MouseService", action: #selector(NSApplication.terminate(_:)),
                                 keyEquivalent: "q"))
+    }
+
+    func menuDidClose(_ menu: NSMenu) {
+        if menu === statusItem?.menu { mouseStatusItem = nil }
     }
 
     private func item(_ title: String, _ action: Selector) -> NSMenuItem {
