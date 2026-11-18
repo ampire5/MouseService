@@ -47,14 +47,16 @@ actor DevicePreferencesFile {
         return bundle
     }
 
-    func devices() throws -> [DeviceIdentity] { try DeviceConfigDocument.devices(in: load()) }
+    func mice() throws -> [DeviceIdentity] { try DeviceConfigDocument.devices(in: load(), declaredCategory: .mouse) }
 
     func values(for device: DeviceIdentity) throws -> DeviceSettingsValues {
         let text = try load()
         func value(_ field: String, _ fallback: String) throws -> String {
             try DeviceConfigDocument.setting(field, for: device, in: text) ?? fallback
         }
-        return try DeviceSettingsValues(speed: value("speed", ""), acceleration: value("acceleration", ""),
+        let profile = try value("pointer-profile", PointerProfile.macOS.rawValue)
+        return try DeviceSettingsValues(pointerProfile: PointerProfile(rawValue: profile) ?? .macOS,
+                                        speed: value("speed", ""), acceleration: value("acceleration", ""),
                                         disableAcceleration: value("disable-acceleration", "no") == "yes",
                                         reverse: value("reverse-scroll", "none"),
                                         dropVertical: value("ignore-vertical-scroll-with", ""),
@@ -63,6 +65,7 @@ actor DevicePreferencesFile {
 }
 
 struct DeviceSettingsValues: Sendable {
+    var pointerProfile: PointerProfile
     var speed: String
     var acceleration: String
     var disableAcceleration: Bool

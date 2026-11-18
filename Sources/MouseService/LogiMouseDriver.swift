@@ -47,9 +47,13 @@ enum PanelForce: Equatable {
 /// whatever a crashed predecessor or another program left diverted (core spec, "Service crashes").
 @MainActor final class LogiMouseDriver: MouseDriver {
     var onEvent: ((DriverEvent) -> Void)?
+    var onBatteryChange: (() -> Void)?
     private(set) var device = DeviceInfo.absent
+    private(set) var battery: BatteryStatus?
 
     private let mouse = LogiMouse()
+    private var batteryRead: Task<Void, Never>?
+    private var batteryRefreshPending = false
     private var state = MouseState.released
     private var cleanStartDone = false
     private var reportedWatching: Set<UInt16> = []
@@ -67,7 +71,10 @@ enum PanelForce: Equatable {
         mouse.setActive(true)
         wakeObserver = NSWorkspace.shared.notificationCenter.addObserver(
             forName: NSWorkspace.didWakeNotification, object: nil, queue: .main) { [weak self] _ in
-            MainActor.assumeIsolated { self?.mouse.systemDidWake() }
+            MainActor.assumeIsolated {
+                self?.mouse.systemDidWake()
+                self?.refreshBattery()
+            }
         }
         Task { @MainActor [weak self] in
             guard let events = self?.mouse.events else { return }
@@ -105,8 +112,32 @@ enum PanelForce: Equatable {
         applyPanelForce()
     }
 
+    func refreshBattery() {
+        guard mouse.isConnected else { return }
+        guard batteryRead == nil else {
+            batteryRefreshPending = true
+            return
+        }
+        batteryRead = Task { [weak self, mouse] in
+            let status = await mouse.readBatteryStatus()
+            guard let self, !Task.isCancelled else { return }
+            batteryRead = nil
+            if let status, status != battery {
+                battery = status
+                onBatteryChange?()
+            }
+            if batteryRefreshPending {
+                batteryRefreshPending = false
+                refreshBattery()
+            }
+        }
+    }
+
     /// At quit: everything back to the mouse before the process ends.
-    func releaseAllSync() { mouse.releaseAllSync() }
+    func releaseAllSync() {
+        batteryRead?.cancel()
+        mouse.releaseAllSync()
+    }
 
     // MARK: Private
 
@@ -145,9 +176,14 @@ enum PanelForce: Equatable {
             }
             applyPanelForce()
             updateDevice()
+            onBatteryChange?()
+            refreshBattery()
         case .disconnected:
             Self.log.info("disconnected")
+            battery = nil
+            batteryRefreshPending = false
             updateDevice()
+            onBatteryChange?()
         case let .highResolutionWheel(on):
             onEvent?(.wheel(highResolution: on, mode: mode(mouse.wheelMode), byButton: false))
         case let .wheelMode(m, byButton):

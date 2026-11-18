@@ -29,8 +29,9 @@ final class ScrollRules: Sendable {
     /// For the menu: how many schemes and devices, or what is wrong with the file.
     var summary: String {
         if let rulesError { return "config.yaml: \(rulesError)" }
-        let set = devices.values.filter { $0.applied != nil || scrollRules.rule(for: $0.id) != nil }.count
-        return "Devices: \(rules.count) configured, \(set) of \(devices.count) set"
+        let mice = devices.values.filter { $0.identity.category == .mouse }
+        let set = mice.filter { $0.applied != nil || scrollRules.rule(for: $0.id) != nil }.count
+        return "Connected mice: \(set) of \(mice.count) set"
     }
 
     static let configURL = FileManager.default.homeDirectoryForCurrentUser
@@ -49,11 +50,12 @@ final class ScrollRules: Sendable {
         /// The property the acceleration goes to (`HIDPointerAccelerationType`).
         let accelerationKey: String
         /// The values before MouseService wrote any (nil: the device did not report one, nothing to give back).
-        let original: (resolution: CFTypeRef?, acceleration: CFTypeRef?, linear: CFTypeRef?)
+        let original: (resolution: CFTypeRef?, acceleration: CFTypeRef?, linear: CFTypeRef?, curve: NSArray)
         /// What MouseService last wrote; nil: nothing, the device has its own values.
         var applied: PointerSettings?
         /// A failed write must be retried even when the requested settings have not changed.
         var needsApply = false
+        var curveNeedsRestore = false
     }
 
     private let services: () -> [any PointerDeviceService]?
@@ -219,9 +221,11 @@ final class ScrollRules: Sendable {
     # devices:
     #   MX Master 4:
     #     id: 46d:c548
+    #     category: mouse              # show in the device picker when disconnected
     #     speed: 0.125                  # 0…1
     #     acceleration: 0.225           # 0…40
     #     disable-acceleration: false
+    #     pointer-profile: macos      # macos | linear | windows-epp | libinput-adaptive
     #     reverse-scroll: vertical      # none | vertical | horizontal | both
     #     ignore-horizontal-scroll-with: [command, control]   # also ignore-vertical-scroll-with; shift, option
     #     apps:
@@ -336,7 +340,8 @@ final class ScrollRules: Sendable {
             let accelerationKey = service.accelerationKey
             devices[id] = Device(id: id, service: service, identity: identity, accelerationKey: accelerationKey,
                                  original: (service.property("HIDPointerResolution"), service.property(accelerationKey),
-                                            service.property("HIDUseLinearScalingMouseAcceleration")),
+                                            service.property("HIDUseLinearScalingMouseAcceleration"),
+                                            service.property(PointerAccelerationCurve.property) as? NSArray ?? []),
                                  applied: nil)
             Self.log.info("Device \(identity.productName ?? "?", privacy: .public) \(String(format: "%04x:%04x", identity.vendorID, identity.productID), privacy: .public) \(identity.category.rawValue, privacy: .public)")
         }
@@ -364,18 +369,21 @@ final class ScrollRules: Sendable {
         guard var device = devices[id] else { return }
         let s = device.service
         var succeeded = true
-        func set(_ key: String, _ value: CFTypeRef?) {
-            guard let value else { return }
+        @discardableResult func set(_ key: String, _ value: CFTypeRef?) -> Bool {
+            guard let value else { return true }
             if !s.setProperty(key, value) {
                 succeeded = false
                 Self.log.error("Could not set \(key, privacy: .public) on \(device.identity.productName ?? "?", privacy: .public)")
+                return false
             }
+            return true
         }
         // Truncated, as LinearMouse writes it: the same numbers in the device.
         func fixed(_ v: Double) -> CFTypeRef { NSNumber(value: Int32(clamping: Int(v * 65536))) }
         // Written whenever a rule covers the device, as LinearMouse does: the system's default is 1 (linear scaling),
         // and with it LinearMouse's accelerations make the pointer far slower (seen 2026-10-27).
-        let linear = settings.disableAcceleration == true
+        let curve = PointerAccelerationCurve(settings.profile)
+        let linear = curve == nil && settings.disableAcceleration == true
         if device.original.linear != nil {
             set("HIDUseLinearScalingMouseAcceleration", NSNumber(value: linear ? 1 : 0))
         }
@@ -384,8 +392,17 @@ final class ScrollRules: Sendable {
         } else {
             set("HIDPointerResolution", device.original.resolution)
         }
+        var curveApplied = false
+        if let curve {
+            curveApplied = set(PointerAccelerationCurve.property, curve.hidValue)
+            device.curveNeedsRestore = device.curveNeedsRestore || curveApplied
+        } else if device.curveNeedsRestore {
+            device.curveNeedsRestore = !set(PointerAccelerationCurve.property, device.original.curve)
+        }
         // The resolution takes effect once the acceleration is written after it (LinearMouse's PointerKit).
-        if linear && device.original.linear == nil {
+        if curveApplied {
+            set(device.accelerationKey, fixed(PointerAccelerationCurve.index))
+        } else if linear && device.original.linear == nil {
             set(device.accelerationKey, fixed(-1))
         } else if let acceleration = settings.acceleration {
             set(device.accelerationKey, fixed(acceleration))
@@ -403,9 +420,12 @@ final class ScrollRules: Sendable {
         let s = device.service
         if let v = device.original.linear { _ = s.setProperty("HIDUseLinearScalingMouseAcceleration", v) }
         if let v = device.original.resolution { _ = s.setProperty("HIDPointerResolution", v) }
+        if device.curveNeedsRestore {
+            device.curveNeedsRestore = !s.setProperty(PointerAccelerationCurve.property, device.original.curve)
+        }
         if let v = device.original.acceleration { _ = s.setProperty(device.accelerationKey, v) }
-        device.applied = nil
-        device.needsApply = false
+        if !device.curveNeedsRestore { device.applied = nil }
+        device.needsApply = device.curveNeedsRestore
         devices[id] = device
     }
 }

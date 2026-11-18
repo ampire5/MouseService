@@ -3,7 +3,7 @@ import Yams
 
 /// What a rule's `if` can name of a pointing device (LinearMouse's `if.device`).
 public struct DeviceIdentity: Equatable, Sendable {
-    public enum Category: String, Sendable { case mouse, trackpad }
+    public enum Category: String, Sendable { case mouse, trackpad, other }
 
     public var vendorID: Int
     public var productID: Int
@@ -21,21 +21,31 @@ public struct DeviceIdentity: Equatable, Sendable {
     }
 }
 
+public enum PointerProfile: String, CaseIterable, Sendable {
+    case macOS = "macos"
+    case linear
+    case windowsEPP = "windows-epp"
+    case libinputAdaptive = "libinput-adaptive"
+}
+
 /// The pointer part of the resolved rules; nil leaves the device's own value.
 public struct PointerSettings: Equatable, Sendable {
+    public var profile: PointerProfile?
     /// 0…1, LinearMouse's scale (`PointerMath.resolution(speed:)`).
     public var speed: Double?
     /// 0…40, the HID acceleration value.
     public var acceleration: Double?
     public var disableAcceleration: Bool?
 
-    public init(speed: Double? = nil, acceleration: Double? = nil, disableAcceleration: Bool? = nil) {
+    public init(speed: Double? = nil, acceleration: Double? = nil, disableAcceleration: Bool? = nil,
+                profile: PointerProfile? = nil) {
         self.speed = speed
         self.acceleration = acceleration
         self.disableAcceleration = disableAcceleration
+        self.profile = profile
     }
 
-    public var isEmpty: Bool { speed == nil && acceleration == nil && disableAcceleration == nil }
+    public var isEmpty: Bool { speed == nil && acceleration == nil && disableAcceleration == nil && profile == nil }
 }
 
 /// The modifier keys a scroll rule can name.
@@ -96,6 +106,7 @@ public struct ResolvedRules: Equatable, Sendable {
 /// What one block of `config.yaml` sets: a device's own fields, or those of one of its apps. A field that is nil leaves
 /// what an earlier entry set; `reverse` and the two drop lists replace as a whole.
 struct RuleFields: Equatable, Sendable {
+    var profile: PointerProfile?
     var speed: Double?
     var acceleration: Double?
     var disableAcceleration: Bool?
@@ -104,12 +115,14 @@ struct RuleFields: Equatable, Sendable {
     var dropHorizontal: ModifierSet?
 
     static func == (a: Self, b: Self) -> Bool {
-        a.speed == b.speed && a.acceleration == b.acceleration && a.disableAcceleration == b.disableAcceleration
+        a.profile == b.profile && a.speed == b.speed && a.acceleration == b.acceleration
+            && a.disableAcceleration == b.disableAcceleration
             && a.reverse?.vertical == b.reverse?.vertical && a.reverse?.horizontal == b.reverse?.horizontal
             && a.dropVertical == b.dropVertical && a.dropHorizontal == b.dropHorizontal
     }
 
     func apply(to result: inout ResolvedRules) {
+        if let profile { result.pointer.profile = profile }
         if let speed { result.pointer.speed = speed }
         if let acceleration { result.pointer.acceleration = acceleration }
         if let disableAcceleration { result.pointer.disableAcceleration = disableAcceleration }
@@ -130,6 +143,7 @@ public struct DeviceRules: Sendable {
         var vendorID: Int
         var productID: Int
         var serialNumber: String?
+        var category: DeviceIdentity.Category?
         var fields: RuleFields
         var apps: [String: RuleFields]
 
@@ -156,6 +170,7 @@ public struct DeviceRules: Sendable {
 
     public func resolve(_ device: DeviceIdentity, app: String?) -> ResolvedRules {
         var result = ResolvedRules()
+        guard device.category != .other else { return result }
         // Baseline sensitivity for mice; trackpads retain their system settings. YAML fields override it below.
         if device.category == .mouse {
             result.pointer = PointerSettings(speed: 0.125, acceleration: 0.225)
@@ -164,6 +179,7 @@ public struct DeviceRules: Sendable {
             entry.fields.apply(to: &result)
             if let app, let fields = entry.apps[app] { fields.apply(to: &result) }
         }
+        if device.category != .mouse { result.pointer.profile = nil }
         return result
     }
 
@@ -214,6 +230,7 @@ public struct DeviceRules: Sendable {
         guard let map = body.mapping else { throw RulesError.bad(path) }
         var id: (Int, Int)?
         var serial: String?
+        var category: DeviceIdentity.Category?
         var fields = RuleFields()
         var apps: [String: RuleFields] = [:]
         for (keyNode, value) in map {
@@ -223,6 +240,9 @@ public struct DeviceRules: Sendable {
             case "serial":
                 guard let s = value.string, !s.isEmpty else { throw RulesError.bad("\(path).serial") }
                 serial = s
+            case "category":
+                category = value.string.flatMap(DeviceIdentity.Category.init(rawValue:))
+                if category == nil { ignored.append("\(path).category") }
             case "apps":
                 guard let list = value.mapping else {
                     if isEmpty(value) { continue }
@@ -237,7 +257,7 @@ public struct DeviceRules: Sendable {
             }
         }
         guard let id else { throw RulesError.bad("\(path).id") }
-        return Entry(vendorID: id.0, productID: id.1, serialNumber: serial, fields: fields, apps: apps)
+        return Entry(vendorID: id.0, productID: id.1, serialNumber: serial, category: category, fields: fields, apps: apps)
     }
 
     private static func fields(_ body: Node, path: String, ignored: inout [String]) throws -> RuleFields {
@@ -256,6 +276,9 @@ public struct DeviceRules: Sendable {
                               ignored: inout [String]) throws {
         let at = "\(path).\(key)"
         switch key {
+        case "pointer-profile":
+            guard let profile = value.string.flatMap(PointerProfile.init(rawValue:)) else { throw RulesError.bad(at) }
+            fields.profile = profile
         case "speed": fields.speed = try number(value, at, in: 0...1)
         case "acceleration": fields.acceleration = try number(value, at, in: 0...40)
         case "disable-acceleration":

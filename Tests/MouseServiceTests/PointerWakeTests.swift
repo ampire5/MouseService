@@ -37,6 +37,31 @@ private func writePointerConfig(to url: URL) throws {
     """.write(to: url, atomically: true, encoding: .utf8)
 }
 
+@Test @MainActor func changingProfilesAppliesAndClearsHIDCurves() throws {
+    let url = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString + ".yaml")
+    defer { try? FileManager.default.removeItem(at: url) }
+    let service = HIDService(1)
+    let pointer = PointerDevices(configURL: url, services: { [service] })
+    func select(_ profile: String) throws {
+        try """
+        devices:
+          Mouse: { id: '1234:5678', pointer-profile: \(profile) }
+        """.write(to: url, atomically: true, encoding: .utf8)
+        pointer.reload()
+    }
+
+    try select("windows-epp")
+    pointer.rescan()
+    let windows = service.properties["UserPointerAccelCurvesKey"] as? [[String: Int]]
+    #expect(windows?.first?["HIDAccelGainParabolic"] ?? 0 > 0)
+    #expect((service.properties["HIDUseLinearScalingMouseAcceleration"] as? NSNumber)?.intValue == 0)
+    try select("linear")
+    #expect((service.properties["UserPointerAccelCurvesKey"] as? [[String: Int]])?.first?["HIDAccelGainParabolic"] == 0)
+    try select("macos")
+    #expect((service.properties["UserPointerAccelCurvesKey"] as? NSArray)?.count == 0)
+    #expect((service.properties["HIDMouseAcceleration"] as? NSNumber)?.intValue == 14745)
+}
+
 @MainActor private func configuredPointer(_ services: @escaping () -> [any PointerDeviceService]?) throws -> PointerDevices {
     let url = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString + ".yaml")
     try writePointerConfig(to: url)

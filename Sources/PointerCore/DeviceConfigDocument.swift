@@ -11,16 +11,18 @@ public enum DeviceConfigDocument {
         }
     }
 
-    private static let fields = ["speed", "acceleration", "disable-acceleration", "reverse-scroll",
+    private static let fields = ["pointer-profile", "speed", "acceleration", "disable-acceleration", "reverse-scroll",
                                  "ignore-vertical-scroll-with", "ignore-horizontal-scroll-with"]
 
-    public static func devices(in yaml: String) throws -> [DeviceIdentity] {
+    /// A category filter requires an explicit declaration. An offline device's name can be any YAML key.
+    public static func devices(in yaml: String, declaredCategory: DeviceIdentity.Category? = nil) throws -> [DeviceIdentity] {
         let (root, rules) = try parse(yaml)
         let names = root["devices"]?.mapping.map { Array($0).map { $0.key.string ?? "Device" } } ?? []
-        return zip(names, rules.entries).map { name, entry in
-            DeviceIdentity(vendorID: entry.vendorID, productID: entry.productID, productName: name,
+        return zip(names, rules.entries).compactMap { name, entry in
+            if let declaredCategory, entry.category != declaredCategory { return nil }
+            return DeviceIdentity(vendorID: entry.vendorID, productID: entry.productID, productName: name,
                            serialNumber: entry.serialNumber,
-                           category: name.localizedCaseInsensitiveContains("trackpad") ? .trackpad : .mouse)
+                           category: entry.category ?? (name.localizedCaseInsensitiveContains("trackpad") ? .trackpad : .mouse))
         }
     }
 
@@ -46,11 +48,13 @@ public enum DeviceConfigDocument {
         })
         if let exact {
             var body = entries[exact].value
+            if body["category"] == nil { body["category"] = Node(device.category.rawValue) }
             body[field] = replacement
             entries[exact] = (entries[exact].key, body)
         }
         if needsTrailing {
             var body = Node([(Node("id"), Node(String(format: "%x:%x", device.vendorID, device.productID)))])
+            body["category"] = Node(device.category.rawValue)
             if let serial = device.serialNumber { body["serial"] = Node(serial) }
             body[field] = replacement
             // Preserve explicit app values even when an app's old value happened to equal the old default.
@@ -102,6 +106,9 @@ public enum DeviceConfigDocument {
     private static func valueNode(_ field: String, _ value: String) throws -> Node {
         try validateField(field)
         switch field {
+        case "pointer-profile":
+            guard PointerProfile(rawValue: value) != nil else { throw DocumentError.invalid("Unknown pointer profile.") }
+            return Node(value)
         case "speed", "acceleration":
             let range: ClosedRange<Double> = field == "speed" ? 0...1 : 0...40
             guard let number = Double(value), number.isFinite, range.contains(number) else {
@@ -128,6 +135,7 @@ public enum DeviceConfigDocument {
 
     private static func string(_ field: String, in resolved: ResolvedRules) -> String? {
         switch field {
+        case "pointer-profile": return (resolved.pointer.profile ?? .macOS).rawValue
         case "speed": return resolved.pointer.speed.map { String($0) }
         case "acceleration": return resolved.pointer.acceleration.map { String($0) }
         case "disable-acceleration": return resolved.pointer.disableAcceleration.map { $0 ? "yes" : "no" }

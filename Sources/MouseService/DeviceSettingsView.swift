@@ -1,4 +1,5 @@
 import AppKit
+import PointerCore
 import SettingsKit
 import SwiftUI
 
@@ -6,13 +7,13 @@ extension DeviceSettingsController {
     var pages: [SettingsPage] {
         [SettingsPage("devices", "Devices", symbol: "computermouse", sections: [
             SettingsSection("Device", rows: [
-                .custom("Selected device", searchTexts: { ["device", "mouse", "trackpad"] }) {
+                .custom("Selected device", searchTexts: { ["device", "mouse"] }) {
                     DeviceChooser(controller: self).preferredColorScheme(.dark)
                         .foregroundStyle(Color(red: 0.95, green: 0.95, blue: 0.97))
                 },
             ]),
             SettingsSection("Pointer", rows: [
-                .custom("Pointer sensitivity", searchTexts: { ["speed", "acceleration", "sensitivity"] }) {
+                .custom("Pointer sensitivity", searchTexts: { ["speed", "acceleration", "profile", "windows", "libinput"] }) {
                     PointerControls(controller: self).preferredColorScheme(.dark)
                         .foregroundStyle(Color(red: 0.95, green: 0.95, blue: 0.97))
                 },
@@ -40,7 +41,7 @@ private struct DeviceChooser: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 10) {
             if controller.devices.isEmpty {
-                Text("No pointing devices found. Connect a mouse or import settings.")
+                Text("No mice found. Connect a mouse or import settings.")
             } else {
                 Picker("Device", selection: Binding(get: { controller.selectedID }, set: { id in
                     Task { await controller.select(id) }
@@ -91,22 +92,57 @@ private struct PointerControls: View {
     var body: some View {
         let selection = controller.selectedID
         VStack(spacing: 12) {
+            Picker("Profile", selection: Binding(get: { controller.pointerProfile }, set: { profile in
+                Task { await controller.set("pointer-profile", value: profile.rawValue, for: selection) }
+            })) {
+                ForEach(PointerProfile.allCases, id: \.self) { profile in
+                    Text(profile.title).tag(profile)
+                }
+            }
+            .pickerStyle(.menu)
+            Text(controller.pointerProfile.hint)
+                .font(.caption)
+                .foregroundStyle(.secondary)
+                .frame(maxWidth: .infinity, alignment: .leading)
+            Divider()
             SensitivityControl(title: "Speed", value: controller.speed, range: 0...1) {
                 await controller.set("speed", value: $0, for: selection)
             }
-            Divider()
-            SensitivityControl(title: "Acceleration", value: controller.acceleration, range: 0...40) {
-                await controller.set("acceleration", value: $0, for: selection)
+            if controller.pointerProfile == .macOS {
+                Divider()
+                SensitivityControl(title: "Acceleration", value: controller.acceleration, range: 0...40) {
+                    await controller.set("acceleration", value: $0, for: selection)
+                }
+                Divider()
+                Toggle("Disable acceleration", isOn: Binding(get: { controller.disableAcceleration }, set: { value in
+                    Task { await controller.set("disable-acceleration", value: value ? "yes" : "no", for: selection) }
+                }))
+                .toggleStyle(.switch)
             }
-            Divider()
-            Toggle("Disable acceleration", isOn: Binding(get: { controller.disableAcceleration }, set: { value in
-                Task { await controller.set("disable-acceleration", value: value ? "yes" : "no") }
-            }))
-            .toggleStyle(.switch)
         }
         .padding(14)
         .id(selection)
         .disabled(!controller.ready || controller.selectedDevice == nil || controller.isSaving)
+    }
+}
+
+private extension PointerProfile {
+    var title: String {
+        switch self {
+        case .macOS: "macOS"
+        case .linear: "Linear"
+        case .windowsEPP: "Windows EPP–style"
+        case .libinputAdaptive: "libinput Adaptive–style"
+        }
+    }
+
+    var hint: String {
+        switch self {
+        case .macOS: "The macOS curve. Use Acceleration to tune how much the pointer speeds up."
+        case .linear: "The same mouse movement moves the pointer the same distance at any speed."
+        case .windowsEPP: "An approximation of Windows Enhance Pointer Precision. Move slowly for small adjustments or quickly to cross the screen."
+        case .libinputAdaptive: "Inspired by Linux. Slows down small movements more than Windows EPP–style and builds speed more gradually."
+        }
     }
 }
 

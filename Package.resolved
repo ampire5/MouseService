@@ -1,13 +1,13 @@
 {
-  "originHash" : "1a9827516549fe434f56573c2be2eb326f6a4caa148fa4dffd5e849bfa881069",
+  "originHash" : "b4bea8fe5407e165cdf3b4d12d6acadc08707130a6ea4bd649089b90baf67e0d",
   "pins" : [
     {
       "identity" : "logihidpp",
       "kind" : "remoteSourceControl",
       "location" : "https://github.com/ampire5/LogiHIDPP.git",
       "state" : {
-        "revision" : "0c6849480ac0ea46c0bf5e7727d9eb77b49c7ed0",
-        "version" : "0.1.0"
+        "revision" : "082ceaa5847917389426a927397d18b47b400b15",
+        "version" : "0.1.2"
       }
     },
     {
@@ -15,8 +15,8 @@
       "kind" : "remoteSourceControl",
       "location" : "https://github.com/ampire5/SettingsKit.git",
       "state" : {
-        "revision" : "33841e33b4eafa789620d76c214278f4617417bb",
-        "version" : "0.7.0"
+        "revision" : "e0bb777ec16fbb1169d41fae9c357a11e7fbb27a",
+        "version" : "0.8.2"
       }
     },
     {
@@ -24,8 +24,8 @@
       "kind" : "remoteSourceControl",
       "location" : "https://github.com/jpsim/Yams.git",
       "state" : {
-        "revision" : "3d6871d5b4a5cd519adf233fbb576e0a2af71c17",
-        "version" : "5.4.0"
+        "revision" : "a27b21e0c81c5bf42049b897a62aaf387e80f279",
+        "version" : "6.2.2"
       }
     }
   ],

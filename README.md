@@ -14,6 +14,7 @@ Master 4 is handled over HID++ through [LogiHIDPP](https://github.com/ampire5/Lo
   - A client that crashes releases everything at once. A service that crashes is restarted by launchd, and the
     clients come back.
   - The mouse's own settings (haptic strength, panel force) live in the service's Settings.
+  - Open the MouseService menu to see the MX Master 4's battery percentage and charging status over Logi Bolt.
   - Design: `docs/superpowers/specs/2026-10-27-core-service-design.md`.
 - **The side buttons as a trackpad.**
   - A click of back or forward is a page swipe.
@@ -49,9 +50,20 @@ open /Applications/MouseService.app  # restart the agent with the upgraded app
 
 ### Settings
 
-Open **Settings…** from the MouseService menu. **Devices** lists connected devices and saved configurations:
-choose a device, then adjust speed, acceleration, scroll reversal and the modifier keys that suppress scrolling.
-Changes apply immediately. Trackpads keep their system sensitivity until you explicitly change it.
+Open **Settings… → Devices** from the MouseService menu. Choose a mouse to adjust its pointer profile, speed,
+scroll reversal and the modifier keys that suppress scrolling. Changes apply immediately. Trackpad rules
+can be edited in `config.yaml`. A disconnected mouse appears in the picker when its saved entry has `category: mouse`.
+Settings adds this field when you edit a connected mouse.
+
+| Profile | Pointer response |
+| --- | --- |
+| **macOS** | Native curve with the existing acceleration slider and optional disable switch. |
+| **Linear** | Constant gain at any movement speed. |
+| **Windows EPP–style** | An approximation of Enhance Pointer Precision with lower gain for small movements and an earlier rise for fast movements. |
+| **libinput Adaptive–style** | An approximation of the Linux adaptive profile with more deceleration at low speeds and a gradual rise in gain. |
+
+Speed adjusts sensitivity in all four profiles. The Windows and libinput profiles use the macOS HID velocity
+estimator, so their feel depends on mouse DPI and report rate.
 
 **Mouse** includes side-button gestures, haptic strength, panel force and wheel mode. The Gestures menu toggle
 and Settings control stay synchronized. Accessibility permission is required for gestures and scroll rules.
@@ -74,10 +86,16 @@ For example, use **Edit Devices Config…** in the menu and add your device ID (
 devices:
   Example mouse:
     id: 1234:5678
+    category: mouse
     speed: 0.2
-    acceleration: 0.1
-    # disable-acceleration: true
+    pointer-profile: windows-epp
+    apps:
+      com.example.Editor:
+        pointer-profile: linear
 ```
+
+Use `macos`, `linear`, `windows-epp` or `libinput-adaptive` for `pointer-profile`. The numeric
+`acceleration` and `disable-acceleration` settings apply to the macOS profile.
 
 ### Uninstall
 

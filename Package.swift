@@ -10,10 +10,10 @@ let package = Package(
         .library(name: "MouseClient", targets: ["MouseClient", "MouseContract"]),
     ],
     dependencies: [
-        .package(url: "https://github.com/ampire5/LogiHIDPP.git", from: "0.1.0"),
-        .package(url: "https://github.com/ampire5/SettingsKit.git", from: "0.7.0"),
+        .package(url: "https://github.com/ampire5/LogiHIDPP.git", from: "0.1.2"),
+        .package(url: "https://github.com/ampire5/SettingsKit.git", from: "0.8.2"),
         // The devices config (config.yaml).
-        .package(url: "https://github.com/jpsim/Yams.git", from: "5.1.0"),
+        .package(url: "https://github.com/jpsim/Yams.git", from: "6.2.2"),
     ],
     targets: [
         // What a press and a drag of the side buttons mean: pure, no AppKit, no events.

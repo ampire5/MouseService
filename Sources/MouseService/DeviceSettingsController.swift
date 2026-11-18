@@ -12,14 +12,16 @@ struct SettingsDevice: Identifiable, Sendable {
         return name + (connected ? "" : " (not connected)")
     }
     static func key(_ device: DeviceIdentity) -> String {
-        String(format: "%x:%x", device.vendorID, device.productID) + "/" + (device.serialNumber ?? "")
+        modelKey(device) + "/" + (device.serialNumber ?? "")
     }
+    static func modelKey(_ device: DeviceIdentity) -> String { String(format: "%x:%x", device.vendorID, device.productID) }
 }
 
 /// The device pane's state. No disk reads, writes or import parsing run on the main actor.
 @MainActor @Observable final class DeviceSettingsController {
     var devices: [SettingsDevice] = []
     private(set) var selectedID = ""
+    private(set) var pointerProfile: PointerProfile = .macOS
     private(set) var speed = ""
     private(set) var acceleration = ""
     private(set) var disableAcceleration = false
@@ -36,6 +38,7 @@ struct SettingsDevice: Identifiable, Sendable {
     @ObservationIgnored var connectedDevices: () -> [DeviceIdentity] = { [] }
     @ObservationIgnored var didSave: (() -> Void)?
     @ObservationIgnored private var generation = 0
+    @ObservationIgnored private var seenNonMouseModels: Set<String> = []
 
     init(file: DevicePreferencesFile, preferences: ServiceSettings) {
         self.file = file
@@ -51,20 +54,22 @@ struct SettingsDevice: Identifiable, Sendable {
         let request = generation
         accessibilityGranted = AXIsProcessTrusted()
         let connected = connectedDevices()
+        seenNonMouseModels.formUnion(connected.filter { $0.category == .other }.map(SettingsDevice.modelKey))
+        seenNonMouseModels.subtract(connected.filter { $0.category == .mouse }.map(SettingsDevice.modelKey))
         do {
-            let saved = try await file.devices()
+            let saved = try await file.mice()
             guard request == generation else { return }
             var choices = connected.map { SettingsDevice(identity: $0, connected: true) }
-            for device in saved where !choices.contains(where: {
+            for device in saved where !seenNonMouseModels.contains(SettingsDevice.modelKey(device)) && !choices.contains(where: {
                 $0.identity.vendorID == device.vendorID && $0.identity.productID == device.productID
                     && (device.serialNumber == nil || $0.identity.serialNumber == device.serialNumber)
             }) {
                 choices.append(SettingsDevice(identity: device, connected: false))
             }
             var seen: Set<String> = []
-            devices = choices.filter { seen.insert($0.id).inserted }
+            devices = choices.filter { $0.identity.category == .mouse && seen.insert($0.id).inserted }
             if !devices.contains(where: { $0.id == selectedID }) {
-                selectedID = devices.first(where: { $0.identity.category == .mouse })?.id ?? devices.first?.id ?? ""
+                selectedID = devices.first?.id ?? ""
             }
             try await readSelection(request: request)
             if request == generation { ready = true; error = nil }
@@ -74,7 +79,7 @@ struct SettingsDevice: Identifiable, Sendable {
     }
 
     func select(_ id: String) async {
-        guard !isSaving else { return }
+        guard !isSaving, devices.contains(where: { $0.id == id }) else { return }
         selectedID = id
         ready = false
         generation += 1
@@ -154,6 +159,7 @@ struct SettingsDevice: Identifiable, Sendable {
         guard let device = selectedDevice else { return }
         let values = try await file.values(for: device)
         guard request == generation else { return }
+        pointerProfile = values.pointerProfile
         speed = values.speed
         acceleration = values.acceleration
         disableAcceleration = values.disableAcceleration
