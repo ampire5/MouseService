@@ -50,8 +50,8 @@ open /Applications/MouseService.app  # restart the agent with the upgraded app
 
 ### Settings
 
-Open **Settings… → Devices** from the MouseService menu. Choose a mouse to adjust its pointer profile, speed,
-scroll reversal and the modifier keys that suppress scrolling. Changes apply immediately. Trackpad rules
+Open **Settings… → Pointer & Scrolling** from the MouseService menu. Choose a mouse to adjust its pointer profile,
+speed, scroll reversal and the modifier keys that suppress scrolling. Settings are saved automatically. Trackpad rules
 can be edited in `config.yaml`. A disconnected mouse appears in the picker when its saved entry has `category: mouse`.
 Settings adds this field when you edit a connected mouse.
 
@@ -65,8 +65,8 @@ Settings adds this field when you edit a connected mouse.
 Speed adjusts sensitivity in all four profiles. The Windows and libinput profiles use the macOS HID velocity
 estimator, so their feel depends on mouse DPI and report rate.
 
-**Mouse** includes side-button gestures, haptic strength, panel force and wheel mode. The Gestures menu toggle
-and Settings control stay synchronized. Accessibility permission is required for gestures and scroll rules.
+**Buttons & Wheel** includes side-button gestures, wheel mode, haptic strength and panel force. The menu and
+Settings gesture switches stay synchronized. Accessibility permission is required for gestures and scroll rules.
 
 **Import & Export** transfers device rules and service preferences in one JSON file. Each import validates the
 whole file before making changes and saves the previous configuration and preferences beside `config.yaml` as
@@ -80,7 +80,8 @@ All mice start with pointer **speed 0.125** (0–1 scale) and **acceleration 0.2
 system settings. Device and app entries in `~/.config/mouseservice/config.yaml` override these values; existing
 explicit settings are preserved. Scroll direction and modifier rules remain configurable separately.
 
-For example, use **Edit Devices Config…** in the menu and add your device ID (shown in the device list):
+For example, use **Advanced → Edit Device Rules…** in the menu and add your device ID. Hover over the selected
+mouse in **Pointer & Scrolling** to see its ID:
 
 ```yaml
 devices:

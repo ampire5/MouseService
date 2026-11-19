@@ -1,6 +1,5 @@
 import AppKit
 import Foundation
-import SettingsKit
 import PointerCore
 import Testing
 @testable import MouseService
@@ -9,7 +8,6 @@ import Testing
 @Test @MainActor func settingsWindowResponsiveness() async throws {
     guard ProcessInfo.processInfo.environment["MOUSESERVICE_UI_BENCH"] == "1" else { return }
     _ = NSApplication.shared
-    NSApp.appearance = NSAppearance(named: .darkAqua)
     let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
     defer { try? FileManager.default.removeItem(at: directory) }
     let name = "MouseServiceBench.\(UUID().uuidString)"
@@ -29,9 +27,7 @@ import Testing
         return Double(time.tv_sec) + Double(time.tv_nsec) / 1e9
     }
     let start = cpu()
-    let window = SettingsWindowController(pages: controller.pages, model: SettingsModel(store: store),
-                                          autosaveName: name, lastPageDefaultsKey: name)
-    window.window?.appearance = NSAppearance(named: .darkAqua)
+    let window = controller.makeSettingsWindow(autosaveName: name, lastPageDefaultsKey: name)
     window.show(page: "devices")
     print("UI-BENCH first window CPU ms: \((cpu() - start) * 1000)")
     for round in 1...4 {
@@ -42,15 +38,21 @@ import Testing
         }
     }
     if let output = ProcessInfo.processInfo.environment["MOUSESERVICE_BENCH_OUTPUT"] {
-        for page in ["devices", "mouse", "transfer"] {
-            window.show(page: page)
-            try await Task.sleep(for: .milliseconds(100))
-            if let view = window.window?.contentView,
-               let bitmap = view.bitmapImageRepForCachingDisplay(in: view.bounds) {
+        let nativeWindow = try #require(window.window)
+        let view = try #require(nativeWindow.contentView)
+        for (appearance, size) in [(NSAppearance.Name.aqua, NSSize(width: 782, height: 637)),
+                                   (.darkAqua, NSSize(width: 640, height: 400))] {
+            nativeWindow.appearance = NSAppearance(named: appearance)
+            for page in ["devices", "mouse", "transfer"] {
+                window.show(page: page)
+                nativeWindow.setContentSize(size)
+                nativeWindow.layoutIfNeeded()
+                try await Task.sleep(for: .milliseconds(150))
+                let bitmap = try #require(view.bitmapImageRepForCachingDisplay(in: view.bounds))
                 view.cacheDisplay(in: view.bounds, to: bitmap)
-                if let png = bitmap.representation(using: .png, properties: [:]) {
-                    try png.write(to: URL(fileURLWithPath: output).appendingPathComponent("settings-\(page).png"))
-                }
+                let png = try #require(bitmap.representation(using: .png, properties: [:]))
+                let theme = appearance == .aqua ? "light" : "dark"
+                try png.write(to: URL(fileURLWithPath: output).appendingPathComponent("settings-\(page)-\(theme).png"))
             }
         }
     }
