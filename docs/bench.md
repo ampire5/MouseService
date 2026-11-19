@@ -45,3 +45,18 @@ On Apple Silicon, main-thread CPU: first creation/show 110–117 ms; first page 
 2–4 ms across four rounds without growth. Measured with `CLOCK_THREAD_CPUTIME_ID`. Intel execution was not available;
 the release contains both arm64 and x86_64 slices. File reads, YAML parsing for interactive reload, and writes run
 off the main actor. Ordinary tests do not open the settings window.
+
+### Settings refinement, 2026-11-19
+
+Measured the real settings window on Apple Silicon (macOS 27.2.1), with a fixture mouse and four navigation rounds.
+Times are main-thread CPU milliseconds. The baseline used Swift Build and the final run used SwiftPM's native
+build system.
+
+| Action | Before | After |
+|---|---:|---:|
+| Create and open on Pointer & Scrolling | 169.1 | 129.0 |
+| First visit to Buttons & Wheel or Import & Export | 13.7–19.5 | 13.2–19.6 |
+| Return to a previously opened page | 4.2–6.3 | 3.6–5.3 |
+
+Optional captures use the default 782 × 637 pt size in light appearance and the minimum 640 × 400 pt size in
+dark appearance. Set `MOUSESERVICE_BENCH_OUTPUT` to an existing directory when running the benchmark.

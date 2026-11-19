@@ -1,3 +1,4 @@
+import Accessibility
 import AppKit
 import PointerCore
 import SettingsKit
@@ -5,124 +6,203 @@ import SwiftUI
 
 extension DeviceSettingsController {
     var pages: [SettingsPage] {
-        [SettingsPage("devices", "Devices", symbol: "computermouse", sections: [
-            SettingsSection("Device", rows: [
-                .custom("Selected device", searchTexts: { ["device", "mouse"] }) {
-                    DeviceChooser(controller: self).preferredColorScheme(.dark)
-                        .foregroundStyle(Color(red: 0.95, green: 0.95, blue: 0.97))
+        [SettingsPage("devices", "Pointer & Scrolling", symbol: "computermouse", sections: [
+            SettingsSection("Mouse", rows: [
+                .custom("Selected mouse", searchTexts: { ["device", "mouse", "connected", "offline"] }) {
+                    DeviceChooser(controller: self)
                 },
             ]),
             SettingsSection("Pointer", rows: [
-                .custom("Pointer sensitivity", searchTexts: { ["speed", "acceleration", "profile", "windows", "libinput"] }) {
-                    PointerControls(controller: self).preferredColorScheme(.dark)
-                        .foregroundStyle(Color(red: 0.95, green: 0.95, blue: 0.97))
+                .custom("Pointer controls", searchTexts: { ["speed", "acceleration", "profile", "windows", "libinput", "linear"] }) {
+                    if self.selectedDevice != nil {
+                        PointerControls(controller: self).id(self.selectedID)
+                    } else {
+                        UnavailableMouseSetting("Select a mouse to adjust its tracking.")
+                    }
                 },
             ]),
             SettingsSection("Scrolling", rows: [
-                .custom("Scroll direction and modifiers", searchTexts: { ["scroll", "reverse", "invert", "modifier"] }) {
-                    ScrollControls(controller: self).preferredColorScheme(.dark)
-                        .foregroundStyle(Color(red: 0.95, green: 0.95, blue: 0.97))
+                .custom("Scroll direction and modifiers", searchTexts: {
+                    ["scroll", "reverse", "invert", "modifier", "vertical", "horizontal", "accessibility"]
+                }) {
+                    if self.selectedDevice != nil {
+                        ScrollControls(controller: self)
+                    } else {
+                        UnavailableMouseSetting("Select a mouse to adjust its scrolling.")
+                    }
                 },
             ]),
-        ])] + ServiceSettings.pages + [SettingsPage("transfer", "Import & Export", symbol: "arrow.up.arrow.down", sections: [
-            SettingsSection("Portable settings", rows: [
-                .button("Export settings", "Export…", symbol: "square.and.arrow.up",
-                        description: "Save device rules, gestures and Logitech preferences in one file.") { self.showExportPanel() },
-                .button("Import settings", "Import…", symbol: "square.and.arrow.down",
-                        description: "Restore settings from another Mac. Your current configuration is backed up first.") { self.showImportPanel() },
-                .custom("Transfer status", searchTexts: { [] }) { SettingsStatus(controller: self) },
+        ]), SettingsPage("mouse", "Buttons & Wheel", symbol: "hand.point.up.left", sections:
+            ServiceSettings.controlSections + [
+                SettingsSection("Accessibility", rows: [
+                    .custom("Gesture permission", searchTexts: { ["permission", "accessibility", "gestures"] }) {
+                        AccessibilitySetting(controller: self)
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                            .padding(14)
+                    },
+                ]),
+            ]
+        ), SettingsPage("transfer", "Import & Export", symbol: "arrow.up.arrow.down", sections: [
+            SettingsSection("Back Up or Move Settings", rows: [
+                .custom("Import and export settings", searchTexts: { ["backup", "export", "import", "restore", "json"] }) {
+                    TransferControls(controller: self)
+                },
             ]),
         ])]
+    }
+
+    static func openAccessibilitySettings() {
+        guard let url = URL(string: "x-apple.systempreferences:com.apple.preference.security?Privacy_Accessibility") else { return }
+        NSWorkspace.shared.open(url)
     }
 }
 
 private struct DeviceChooser: View {
     let controller: DeviceSettingsController
+
     var body: some View {
         VStack(alignment: .leading, spacing: 10) {
-            if controller.devices.isEmpty {
-                Text("No mice found. Connect a mouse or import settings.")
-            } else {
-                Picker("Device", selection: Binding(get: { controller.selectedID }, set: { id in
-                    Task { await controller.select(id) }
-                })) {
-                    ForEach(controller.devices) { device in Text(device.title).tag(device.id) }
+            if let device = controller.selection {
+                HStack(alignment: .top, spacing: 12) {
+                    Image(systemName: "computermouse")
+                        .font(.title2)
+                        .foregroundStyle(.secondary)
+                        .accessibilityHidden(true)
+                    VStack(alignment: .leading, spacing: 4) {
+                        Picker("Mouse", selection: Binding(get: { controller.selectedID }, set: { id in
+                            Task { await controller.select(id) }
+                        })) {
+                            ForEach(controller.devices) { mouse in Text(mouse.title).tag(mouse.id) }
+                        }
+                        .labelsHidden()
+                        .fixedSize(horizontal: false, vertical: true)
+                        .disabled(controller.isSaving)
+                        .accessibilityLabel("Selected mouse")
+
+                        Text(device.connected ? "Connected" : "Offline · Changes apply when reconnected")
+                            .font(.subheadline)
+                            .foregroundStyle(.secondary)
+                    }
+                    Spacer(minLength: 0)
                 }
-                .pickerStyle(.menu)
-                .buttonStyle(.borderless)
-                .disabled(controller.isSaving)
-                if let device = controller.selectedDevice {
-                    Text(String(format: "Device ID: %x:%x", device.vendorID, device.productID))
-                        .font(.caption).foregroundStyle(.secondary)
-                }
+                .help("Device ID \(SettingsDevice.modelKey(device.identity))")
+                Text("Changes save automatically. App-specific rules take precedence.")
+                    .font(.subheadline)
+                    .foregroundStyle(.secondary)
+            } else if controller.ready {
+                Label("No mice found", systemImage: "computermouse")
+                    .font(.headline)
+                Text("Connect a mouse to configure it, or use Import & Export to restore saved settings.")
+                    .foregroundStyle(.secondary)
             }
-            SettingsStatus(controller: controller)
+            if let error = controller.error {
+                VStack(alignment: .leading, spacing: 6) {
+                    Label(controller.ready ? "Couldn’t save mouse settings" : "Couldn’t load mouse settings",
+                          systemImage: "exclamationmark.triangle")
+                        .font(.headline)
+                        .foregroundStyle(.orange)
+                    Text(error).foregroundStyle(.secondary)
+                    if !controller.ready {
+                        Button("Try Again") { Task { await controller.refresh() } }
+                    }
+                }
+            } else if !controller.ready {
+                ProgressView("Loading mouse settings…").controlSize(.small)
+            } else if controller.isSaving, controller.transferInProgress == nil {
+                Text("Saving changes…").foregroundStyle(.secondary)
+            }
         }
+        .frame(maxWidth: .infinity, alignment: .leading)
         .padding(14)
+        .onChange(of: controller.error) { _, error in
+            if let error { AccessibilityNotification.Announcement(error).post() }
+        }
     }
 }
 
-private struct SettingsStatus: View {
-    let controller: DeviceSettingsController
+private struct UnavailableMouseSetting: View {
+    let title: LocalizedStringKey
+
+    init(_ title: LocalizedStringKey) { self.title = title }
+
     var body: some View {
-        VStack(alignment: .leading, spacing: 5) {
-            if let error = controller.error {
-                Label(error, systemImage: "exclamationmark.triangle").foregroundStyle(.orange)
-            } else if controller.isSaving {
-                Text("Saving…").foregroundStyle(.secondary)
-            } else if let message = controller.message {
-                Text(message).foregroundStyle(.secondary)
+        Text(title)
+            .foregroundStyle(.secondary)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .padding(14)
+    }
+}
+
+private struct AccessibilitySetting: View {
+    let controller: DeviceSettingsController
+    var showsGranted = true
+
+    var body: some View {
+        if controller.accessibilityGranted {
+            if showsGranted {
+                Label("Accessibility access granted", systemImage: "checkmark.circle")
+                    .foregroundStyle(.secondary)
             }
-            if !controller.accessibilityGranted {
-                Button {
-                    NSWorkspace.shared.open(URL(string: "x-apple.systempreferences:com.apple.preference.security?Privacy_Accessibility")!)
-                } label: {
-                    Text("Allow Accessibility…").foregroundStyle(Color(red: 0.55, green: 0.85, blue: 1))
-                }
-                .buttonStyle(.plain)
-                Text("Accessibility is required for gestures and scroll rules.").foregroundStyle(.secondary)
+        } else {
+            VStack(alignment: .leading, spacing: 8) {
+                Label("Accessibility access required", systemImage: "exclamationmark.triangle")
+                    .font(.headline)
+                Text("Allow MouseService in System Settings to use scroll rules and side-button gestures.")
+                    .font(.subheadline)
+                    .foregroundStyle(.secondary)
+                Button("Open Accessibility Settings…", action: DeviceSettingsController.openAccessibilitySettings)
             }
         }
-        .font(.caption)
     }
 }
 
 private struct PointerControls: View {
     let controller: DeviceSettingsController
+
     var body: some View {
         let selection = controller.selectedID
-        VStack(spacing: 12) {
-            Picker("Profile", selection: Binding(get: { controller.pointerProfile }, set: { profile in
-                Task { await controller.set("pointer-profile", value: profile.rawValue, for: selection) }
-            })) {
-                ForEach(PointerProfile.allCases, id: \.self) { profile in
-                    Text(profile.title).tag(profile)
+        VStack(alignment: .leading, spacing: 12) {
+            HStack {
+                Text("Tracking profile").accessibilityHidden(true)
+                Spacer()
+                Picker("Tracking profile", selection: Binding(get: { controller.pointerProfile }, set: { profile in
+                    Task { await controller.set("pointer-profile", value: profile.rawValue, for: selection) }
+                })) {
+                    ForEach(PointerProfile.allCases, id: \.self) { profile in
+                        Text(profile.title).tag(profile)
+                    }
                 }
+                .labelsHidden()
+                .accessibilityLabel("Tracking profile")
             }
-            .pickerStyle(.menu)
             Text(controller.pointerProfile.hint)
-                .font(.caption)
+                .font(.subheadline)
                 .foregroundStyle(.secondary)
-                .frame(maxWidth: .infinity, alignment: .leading)
             Divider()
-            SensitivityControl(title: "Speed", value: controller.speed, range: 0...1) {
+            SensitivityControl(title: "Tracking speed", value: controller.speed, range: 0...1) {
                 await controller.set("speed", value: $0, for: selection)
             }
             if controller.pointerProfile == .macOS {
                 Divider()
-                SensitivityControl(title: "Acceleration", value: controller.acceleration, range: 0...40) {
-                    await controller.set("acceleration", value: $0, for: selection)
+                HStack {
+                    Text("Pointer acceleration").accessibilityHidden(true)
+                    Spacer()
+                    Toggle("Pointer acceleration", isOn: Binding(get: { !controller.disableAcceleration }, set: { enabled in
+                        Task { await controller.set("disable-acceleration", value: enabled ? "no" : "yes", for: selection) }
+                    }))
+                    .labelsHidden()
+                    .toggleStyle(.switch)
+                    .accessibilityLabel("Pointer acceleration")
                 }
-                Divider()
-                Toggle("Disable acceleration", isOn: Binding(get: { controller.disableAcceleration }, set: { value in
-                    Task { await controller.set("disable-acceleration", value: value ? "yes" : "no", for: selection) }
-                }))
-                .toggleStyle(.switch)
+                if !controller.disableAcceleration {
+                    SensitivityControl(title: "Acceleration", value: controller.acceleration, range: 0...40) {
+                        await controller.set("acceleration", value: $0, for: selection)
+                    }
+                }
             }
         }
         .padding(14)
-        .id(selection)
-        .disabled(!controller.ready || controller.selectedDevice == nil || controller.isSaving)
+        .disabled(!controller.ready || controller.isSaving)
     }
 }
 
@@ -136,25 +216,28 @@ private extension PointerProfile {
         }
     }
 
-    var hint: String {
+    var hint: LocalizedStringKey {
         switch self {
-        case .macOS: "The macOS curve. Use Acceleration to tune how much the pointer speeds up."
-        case .linear: "The same mouse movement moves the pointer the same distance at any speed."
-        case .windowsEPP: "An approximation of Windows Enhance Pointer Precision. Move slowly for small adjustments or quickly to cross the screen."
-        case .libinputAdaptive: "Inspired by Linux. Slows down small movements more than Windows EPP–style and builds speed more gradually."
+        case .macOS: "Use the macOS tracking curve with optional acceleration."
+        case .linear: "The pointer travels the same distance for the same mouse movement at any speed."
+        case .windowsEPP: "Modeled on Windows Enhance Pointer Precision. Move slowly for fine adjustments and quickly to cross the screen."
+        case .libinputAdaptive: "Modeled on Linux tracking. Small movements are slower than with Windows EPP, and speed builds more gradually."
         }
     }
 }
 
-/// Drafts commit on Return or focus loss; dragging commits once at release, not for every pointer event.
 private struct SensitivityControl: View {
-    let title: String
+    let title: LocalizedStringKey
     let value: String
     let range: ClosedRange<Double>
-    let commit: @MainActor (String) async -> Void
+    let commit: @MainActor (String) async -> Bool
     @State private var draft = ""
     @State private var sliderValue = 0.0
     @State private var dragging = false
+    @State private var committing = false
+    @State private var invalid = false
+    @State private var writeFailed = false
+    @State private var keyboardCommit: Task<Void, Never>?
     @FocusState private var focused: Bool
 
     var body: some View {
@@ -162,83 +245,213 @@ private struct SensitivityControl: View {
             HStack {
                 Text(title)
                 Spacer()
-                TextField("System value", text: $draft)
-                    .frame(width: 95).multilineTextAlignment(.trailing).focused($focused)
+                TextField(title, text: $draft, prompt: Text("System"))
+                    .labelsHidden()
+                    .frame(width: 88)
+                    .multilineTextAlignment(.trailing)
+                    .monospacedDigit()
+                    .focused($focused)
                     .onSubmit { saveDraft() }
                     .onChange(of: focused) { _, active in if !active { saveDraft() } }
+                    .accessibilityHint("Enter a value from \(lowerBound) to \(upperBound).")
             }
-            Slider(value: $sliderValue, in: range) { editing in
+            Slider(value: Binding(get: { sliderValue }, set: updateSlider), in: range) { editing in
                 dragging = editing
-                if !editing {
-                    let text = SettingsRow.sliderText(sliderValue)
-                    draft = text
-                    Task { await commit(text) }
-                }
+                keyboardCommit?.cancel()
+                if !editing { saveDraft() }
             }
-            .accessibilityLabel(title)
+            .accessibilityLabel(Text(title))
             HStack {
-                Text(String(format: "%g", range.lowerBound))
+                Text(lowerBound)
                 Spacer()
-                Text(String(format: "%g", range.upperBound))
-            }.font(.caption2).foregroundStyle(.secondary)
+                Text(upperBound)
+            }
+            .font(.caption.monospacedDigit())
+            .foregroundStyle(.secondary)
+            .accessibilityHidden(true)
+            if invalid || writeFailed {
+                Label(invalid ? invalidHint
+                              : "Couldn’t save this value. Press Return to try again.",
+                      systemImage: "exclamationmark.circle")
+                    .font(.subheadline)
+                    .foregroundStyle(.orange)
+            }
         }
-        .onAppear { sync() }
-        .onChange(of: value) { _, _ in if !focused && !dragging { sync() } }
+        .onAppear { sync(value) }
+        .onChange(of: value) { _, latest in
+            if !focused && !dragging && !committing { sync(latest) }
+        }
+        .onDisappear { keyboardCommit?.cancel() }
     }
 
-    private func sync() {
-        draft = value
-        sliderValue = min(max(Double(value) ?? range.lowerBound, range.lowerBound), range.upperBound)
+    private var lowerBound: String { String(format: "%g", range.lowerBound) }
+    private var upperBound: String { String(format: "%g", range.upperBound) }
+    private var invalidHint: String { "Enter a number from \(lowerBound) to \(upperBound)." }
+
+    private func sync(_ stored: String) {
+        draft = stored
+        sliderValue = min(max(Double(stored) ?? range.lowerBound, range.lowerBound), range.upperBound)
+        invalid = false
+        writeFailed = false
+    }
+
+    private func updateSlider(_ number: Double) {
+        sliderValue = number
+        draft = SettingsRow.sliderText(number)
+        invalid = false
+        writeFailed = false
+        guard !dragging else { return }
+        // Keyboard and VoiceOver adjustments can change the binding without a drag.
+        keyboardCommit?.cancel()
+        keyboardCommit = Task {
+            do { try await Task.sleep(for: .milliseconds(250)) } catch { return }
+            saveDraft()
+        }
     }
 
     private func saveDraft() {
+        guard !committing else { return }
         let text = SettingsModel.normalizedNumber(draft)
-        guard text != value else { return }
-        Task { await commit(text) }
+        guard text != value else { sync(value); return }
+        guard let number = Double(text), range.contains(number) else {
+            invalid = true
+            AccessibilityNotification.Announcement(invalidHint).post()
+            return
+        }
+        if number == Double(value) {
+            sync(value)
+            return
+        }
+        invalid = false
+        writeFailed = false
+        committing = true
+        Task {
+            if await commit(text) {
+                sync(String(number))
+            } else {
+                writeFailed = true
+            }
+            committing = false
+        }
     }
 }
 
 private struct ScrollControls: View {
     let controller: DeviceSettingsController
-    private let modifiers = [("command", "⌘"), ("shift", "⇧"), ("option", "⌥"), ("control", "⌃")]
+    private let modifiers = [("command", "Command"), ("shift", "Shift"), ("option", "Option"), ("control", "Control")]
+
     var body: some View {
+        let selection = controller.selectedID
         VStack(alignment: .leading, spacing: 12) {
-            Picker("Reverse scrolling", selection: Binding(get: { controller.reverse }, set: { value in
-                Task { await controller.set("reverse-scroll", value: value) }
-            })) {
-                Text("None").tag("none")
-                Text("Vertical").tag("vertical")
-                Text("Horizontal").tag("horizontal")
-                Text("Both axes").tag("both")
+            if !controller.accessibilityGranted {
+                AccessibilitySetting(controller: controller, showsGranted: false)
+                Divider()
             }
-            .pickerStyle(.menu)
-            .buttonStyle(.borderless)
-            Divider()
-            modifierRow("Ignore vertical scroll with", field: "ignore-vertical-scroll-with", value: controller.dropVertical)
-            Divider()
-            modifierRow("Ignore horizontal scroll with", field: "ignore-horizontal-scroll-with", value: controller.dropHorizontal)
+            VStack(alignment: .leading, spacing: 12) {
+                HStack {
+                    Text("Reverse direction").accessibilityHidden(true)
+                    Spacer()
+                    Picker("Reverse direction", selection: Binding(get: { controller.reverse }, set: { value in
+                        Task { await controller.set("reverse-scroll", value: value, for: selection) }
+                    })) {
+                        Text("Off").tag("none")
+                        Text("Vertical").tag("vertical")
+                        Text("Horizontal").tag("horizontal")
+                        Text("Both axes").tag("both")
+                    }
+                    .labelsHidden()
+                    .accessibilityLabel("Reverse direction")
+                }
+                Divider()
+                Text("Ignore scrolling while holding any selected key.")
+                    .font(.subheadline)
+                    .foregroundStyle(.secondary)
+                modifierRow("Vertical", field: "ignore-vertical-scroll-with", value: controller.dropVertical)
+                modifierRow("Horizontal", field: "ignore-horizontal-scroll-with", value: controller.dropHorizontal)
+            }
+            .disabled(!controller.ready || controller.isSaving)
         }
         .padding(14)
-        .disabled(!controller.ready || controller.selectedDevice == nil || controller.isSaving)
     }
 
-    private func modifierRow(_ title: String, field: String, value: String) -> some View {
-        VStack(alignment: .leading, spacing: 8) {
-            Text(title)
-            HStack(spacing: 16) {
-                ForEach(modifiers, id: \.0) { word, symbol in
-                    Toggle(symbol, isOn: Binding(get: {
-                        value.split(separator: ",").map(String.init).contains(word)
-                    }, set: { enabled in
-                        var chosen = Set(value.split(separator: ",").map(String.init))
-                        if enabled { chosen.insert(word) } else { chosen.remove(word) }
-                        let text = modifiers.map(\.0).filter { chosen.contains($0) }.joined(separator: ",")
-                        Task { await controller.set(field, value: text) }
+    private func modifierRow(_ axis: String, field: String, value: String) -> some View {
+        let selection = controller.selectedID
+        let chosen = Set(value.split(separator: ",").map(String.init))
+        return VStack(alignment: .leading, spacing: 6) {
+            Text(axis).font(.subheadline.weight(.medium)).accessibilityAddTraits(.isHeader)
+            LazyVGrid(columns: [GridItem(.adaptive(minimum: 78), alignment: .leading)], spacing: 8) {
+                ForEach(modifiers, id: \.0) { key, title in
+                    Toggle(title, isOn: Binding(get: { chosen.contains(key) }, set: { enabled in
+                        var updated = chosen
+                        if enabled { updated.insert(key) } else { updated.remove(key) }
+                        let text = modifiers.map(\.0).filter { updated.contains($0) }.joined(separator: ",")
+                        Task { await controller.set(field, value: text, for: selection) }
                     }))
                     .toggleStyle(.checkbox)
-                    .accessibilityLabel(word.capitalized)
+                    .accessibilityLabel("\(axis) scrolling, \(title)")
                 }
             }
+        }
+    }
+}
+
+private struct TransferControls: View {
+    let controller: DeviceSettingsController
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            VStack(spacing: 12) {
+                transferRow("Export settings", button: "Export…", symbol: "square.and.arrow.up",
+                            detail: "Save device rules, gestures, and Logitech preferences to a JSON file.",
+                            action: controller.showExportPanel)
+                Divider()
+                transferRow("Import settings", button: "Import…", symbol: "square.and.arrow.down",
+                            detail: "Replace your settings from a MouseService backup. A backup of your current settings is saved first.",
+                            action: controller.showImportPanel)
+            }
+            .disabled(controller.isSaving)
+            if let progress = controller.transferInProgress {
+                Divider()
+                ProgressView(progress).controlSize(.small)
+            } else if let error = controller.transferError {
+                Divider()
+                Label {
+                    VStack(alignment: .leading, spacing: 4) {
+                        Text("Couldn’t transfer settings").font(.headline)
+                        Text(error).foregroundStyle(.secondary)
+                    }
+                } icon: {
+                    Image(systemName: "exclamationmark.triangle").foregroundStyle(.orange)
+                }
+            } else if let message = controller.transferMessage {
+                Divider()
+                Label(message, systemImage: "checkmark.circle")
+                    .foregroundStyle(.secondary)
+            }
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .padding(14)
+        .onChange(of: controller.transferError) { _, error in
+            if let error { AccessibilityNotification.Announcement(error).post() }
+        }
+        .onChange(of: controller.transferMessage) { _, message in
+            if let message { AccessibilityNotification.Announcement(message).post() }
+        }
+    }
+
+    private func transferRow(_ title: LocalizedStringKey, button: LocalizedStringKey, symbol: String,
+                             detail: LocalizedStringKey, action: @escaping () -> Void) -> some View {
+        HStack(alignment: .top, spacing: 10) {
+            Image(systemName: symbol)
+                .frame(width: 18)
+                .foregroundStyle(.secondary)
+                .accessibilityHidden(true)
+            VStack(alignment: .leading, spacing: 4) {
+                Text(title).font(.headline)
+                Text(detail).font(.subheadline).foregroundStyle(.secondary)
+            }
+            .frame(maxWidth: .infinity, alignment: .leading)
+            Button(button, action: action)
         }
     }
 }

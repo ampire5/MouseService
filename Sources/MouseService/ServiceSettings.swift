@@ -71,27 +71,23 @@ import SettingsKit
         onChange?()
     }
 
-    static let pages = [
-        SettingsPage("mouse", "Mouse", symbol: "computermouse", sections: [
-            SettingsSection("MX Master", rows: [
-                .number(hapticStrengthKey, "Haptic strength", step: 5, symbol: "waveform",
-                        description: "The mouse's normal vibration strength. 0–100, or keep (default): the mouse's "
-                            + "own setting stays. Apps ask for a stronger one-off vibration themselves."),
-                .number(panelForceKey, "Panel force", step: 5, symbol: "hand.point.down",
-                        description: "How hard the haptic panel must be pressed: 0 the lightest the mouse takes, 100 "
-                            + "the stiffest; default writes the factory value, keep leaves it alone. Default 0."),
-            ]),
-            SettingsSection("Gestures", rows: [
-                .toggle(gesturesKey, "Side-button gestures", symbol: "hand.draw",
-                        description: "Click Back or Forward to swipe a page. Hold Back and drag sideways to switch "
-                            + "Spaces, up for Mission Control, or down for App Exposé. Requires Accessibility."),
-            ]),
-            SettingsSection("Wheel", rows: [
-                .choice(wheelModeKey, "Wheel mode", [("ratchet", "Ratchet"), ("free-spin", "Free spin")],
-                        symbol: "dial.medium",
-                        description: "The wheel's mode everywhere, unless an app asks for another over its own "
-                            + "window. The SmartShift button changes it where no app does. Default ratchet."),
-            ]),
+    static let controlSections = [
+        SettingsSection("Side Buttons", rows: [
+            .toggle(gesturesKey, "Side-button gestures", symbol: "hand.draw",
+                    description: "Click Back or Forward to swipe between pages. Hold Back and drag sideways to switch "
+                        + "Spaces, up for Mission Control, or down for App Exposé. Requires Accessibility."),
+        ]),
+        SettingsSection("MX Master Wheel", rows: [
+            .choice(wheelModeKey, "Default wheel mode", [("ratchet", "Ratchet"), ("free-spin", "Free spin")],
+                    symbol: "dial.medium",
+                    description: "SmartShift changes the default mode. Apps can override it over their own windows."),
+        ]),
+        SettingsSection("MX Master Haptics", rows: [
+            .number(hapticStrengthKey, "Haptic strength", step: 5, symbol: "waveform",
+                    description: "Vibration strength from 0 to 100. Enter “keep” to use the mouse’s own setting."),
+            .number(panelForceKey, "Panel press force", step: 5, symbol: "hand.point.down",
+                    description: "Force needed to press the haptic panel, from 0 (lightest) to 100 (firmest). "
+                        + "Enter “default” for the factory value or “keep” to preserve the mouse’s setting."),
         ]),
     ]
 }

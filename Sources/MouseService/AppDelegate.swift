@@ -81,6 +81,10 @@ import SettingsKit
         CGAssociateMouseAndMouseCursorPosition(1)
     }
 
+    func applicationDidBecomeActive(_ notification: Notification) {
+        if settingsWindow?.window?.isVisible == true { deviceSettings.refreshAccessibility() }
+    }
+
     // MARK: Service
 
     private func startService() {
@@ -163,7 +167,11 @@ import SettingsKit
 
     @objc private func accessibilityChanged() {
         // The notification comes before the list is written: look a moment later.
-        DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) { [weak self] in self?.updateTap() }
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) { [weak self] in
+            guard let self else { return }
+            self.updateTap()
+            if self.settingsWindow != nil { self.deviceSettings.refreshAccessibility() }
+        }
     }
 
     private func updateTap() {
@@ -179,7 +187,6 @@ import SettingsKit
         if scrollTap == nil, AXIsProcessTrusted(), let scroll = ScrollTap(rules: pointer.scrollRules), scroll.start() {
             scrollTap = scroll
         }
-        statusItem?.button?.appearsDisabled = tap == nil
     }
 
     // MARK: Menu
@@ -187,11 +194,11 @@ import SettingsKit
     private func updateMouseStatus() {
         guard let mouseStatusItem else { return }
         guard let driver, driver.device.present else {
-            mouseStatusItem.title = "No Logitech mouse"
+            mouseStatusItem.title = "MX Master disconnected"
             return
         }
         guard let battery = driver.battery else {
-            mouseStatusItem.title = "MX Master: connected"
+            mouseStatusItem.title = "MX Master connected"
             return
         }
         let charge = "MX Master · \(battery.percent)%"
@@ -200,19 +207,50 @@ import SettingsKit
 
     func menuNeedsUpdate(_ menu: NSMenu) {
         menu.removeAllItems()
+        let settings = item("Settings…", #selector(openSettings))
+        settings.keyEquivalent = ","
+        menu.addItem(settings)
+        menu.addItem(.separator())
+
         let mouseStatus = NSMenuItem(title: "", action: nil, keyEquivalent: "")
         menu.addItem(mouseStatus)
         mouseStatusItem = mouseStatus
         updateMouseStatus()
         driver?.refreshBattery()
+        let gestures = item("Side-Button Gestures", #selector(toggleGestures))
+        gestures.state = gesturesOn ? .on : .off
+        if synth == nil { gestures.action = nil }
+        menu.addItem(gestures)
+        if !AXIsProcessTrusted() {
+            menu.addItem(item("Open Accessibility Settings…", #selector(openAccessibility)))
+        } else if synth == nil || (gesturesOn && tap == nil) {
+            menu.addItem(NSMenuItem(title: "Side-button gestures unavailable", action: nil, keyEquivalent: ""))
+        }
+        menu.addItem(.separator())
+        menu.addItem(item("Release All Mouse Buttons", #selector(releaseAll)))
+        menu.addItem(advancedMenuItem())
+        menu.addItem(.separator())
+        menu.addItem(NSMenuItem(title: "Quit MouseService", action: #selector(NSApplication.terminate(_:)),
+                                keyEquivalent: "q"))
+    }
+
+    private func advancedMenuItem() -> NSMenuItem {
+        let advanced = NSMenuItem(title: "Advanced", action: nil, keyEquivalent: "")
+        let menu = NSMenu()
+        menu.addItem(NSMenuItem(title: pointer.summary, action: nil, keyEquivalent: ""))
+        menu.addItem(item("Edit Device Rules…", #selector(editDevicesConfig)))
+        menu.addItem(item("Reload Device Rules", #selector(reloadDevicesConfig)))
+        menu.addItem(.separator())
+
         let clients = service?.clients ?? []
-        let clientsItem = NSMenuItem(title: clients.isEmpty ? "No clients" : "Clients", action: nil, keyEquivalent: "")
+        let clientsItem = NSMenuItem(title: clients.isEmpty ? "No connected apps" : "Connected Apps",
+                                     action: nil, keyEquivalent: "")
         if !clients.isEmpty {
             let submenu = NSMenu()
             for client in clients {
-                let item = NSMenuItem(title: "\(client.bundleID) (\(client.pid))", action: nil, keyEquivalent: "")
-                item.state = client.owner ? .on : .off
-                submenu.addItem(item)
+                let row = NSMenuItem(title: "\(client.bundleID) (\(client.pid))", action: nil, keyEquivalent: "")
+                row.state = client.owner ? .on : .off
+                submenu.addItem(row)
             }
             clientsItem.submenu = submenu
         }
@@ -220,36 +258,10 @@ import SettingsKit
         let held = (0..<32).filter { NSEvent.pressedMouseButtons & (1 << $0) != 0 }
         if !held.isEmpty {
             let numbers = held.map(String.init).joined(separator: ", ")
-            menu.addItem(NSMenuItem(title: "Buttons held by the system: \(numbers) — a stuck button, reconnect the mouse",
-                                    action: nil, keyEquivalent: ""))
+            menu.addItem(NSMenuItem(title: "Buttons held by macOS: \(numbers)", action: nil, keyEquivalent: ""))
         }
-        menu.addItem(item("Release All", #selector(releaseAll)))
-        menu.addItem(.separator())
-        let status: String = if synth == nil {
-            "Gestures unavailable on this macOS"
-        } else if !AXIsProcessTrusted() {
-            "Waiting for Accessibility permission"
-        } else if tap != nil {
-            "Back + drag: Spaces, Mission Control"
-        } else {
-            "Gestures off"
-        }
-        menu.addItem(NSMenuItem(title: status, action: nil, keyEquivalent: ""))
-        let gestures = item("Gestures", #selector(toggleGestures))
-        gestures.state = gesturesOn ? .on : .off
-        gestures.isEnabled = synth != nil
-        menu.addItem(gestures)
-        if !AXIsProcessTrusted() {
-            menu.addItem(item("Open Accessibility Settings…", #selector(openAccessibility)))
-        }
-        menu.addItem(.separator())
-        menu.addItem(NSMenuItem(title: pointer.summary, action: nil, keyEquivalent: ""))
-        menu.addItem(item("Edit Devices Config…", #selector(editDevicesConfig)))
-        menu.addItem(item("Reload Devices Config", #selector(reloadDevicesConfig)))
-        menu.addItem(.separator())
-        menu.addItem(item("Settings…", #selector(openSettings)))
-        menu.addItem(NSMenuItem(title: "Quit MouseService", action: #selector(NSApplication.terminate(_:)),
-                                keyEquivalent: "q"))
+        advanced.submenu = menu
+        return advanced
     }
 
     func menuDidClose(_ menu: NSMenu) {
@@ -278,17 +290,11 @@ import SettingsKit
     }
 
     @objc private func openAccessibility() {
-        NSWorkspace.shared.open(URL(string: "x-apple.systempreferences:com.apple.preference.security?Privacy_Accessibility")!)
+        DeviceSettingsController.openAccessibilitySettings()
     }
 
     @objc private func openSettings() {
-        NSApp.appearance = NSAppearance(named: .darkAqua)
-        let window = settingsWindow ?? SettingsWindowController(pages: deviceSettings.pages,
-                                                                model: SettingsModel(store: settings),
-                                                                autosaveName: "MouseServiceSettings",
-                                                                lastPageDefaultsKey: "SettingsLastPage")
-        // The existing glass backdrop is dark; keep its text and controls in the matching appearance.
-        window.window?.appearance = NSAppearance(named: .darkAqua)
+        let window = settingsWindow ?? deviceSettings.makeSettingsWindow()
         settingsWindow = window
         NSApp.activate()
         window.show(page: nil)

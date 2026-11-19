@@ -2,15 +2,15 @@ import AppKit
 import ApplicationServices
 import Observation
 import PointerCore
+import SettingsKit
+import UniformTypeIdentifiers
 
 struct SettingsDevice: Identifiable, Sendable {
     let identity: DeviceIdentity
     let connected: Bool
     var id: String { Self.key(identity) }
-    var title: String {
-        let name = identity.productName ?? (identity.category == .trackpad ? "Trackpad" : "Mouse")
-        return name + (connected ? "" : " (not connected)")
-    }
+    private var name: String { identity.productName.flatMap { $0.isEmpty ? nil : $0 } ?? "Mouse" }
+    var title: String { connected ? name : "\(name) (offline)" }
     static func key(_ device: DeviceIdentity) -> String {
         modelKey(device) + "/" + (device.serialNumber ?? "")
     }
@@ -30,8 +30,10 @@ struct SettingsDevice: Identifiable, Sendable {
     private(set) var dropHorizontal = ""
     private(set) var isSaving = false
     private(set) var ready = false
-    var error: String?
-    var message: String?
+    private(set) var error: String?
+    private(set) var transferError: String?
+    private(set) var transferMessage: String?
+    private(set) var transferInProgress: String?
     private(set) var accessibilityGranted = AXIsProcessTrusted()
     @ObservationIgnored private let file: DevicePreferencesFile
     @ObservationIgnored private let preferences: ServiceSettings
@@ -45,14 +47,25 @@ struct SettingsDevice: Identifiable, Sendable {
         self.preferences = preferences
     }
 
-    var selectedDevice: DeviceIdentity? { devices.first { $0.id == selectedID }?.identity }
+    func makeSettingsWindow(autosaveName: String = "MouseServiceSettings",
+                            lastPageDefaultsKey: String = "SettingsLastPage") -> SettingsWindowController {
+        SettingsWindowController(pages: pages, model: SettingsModel(store: preferences),
+                                 autosaveName: autosaveName, lastPageDefaultsKey: lastPageDefaultsKey, style: .plain)
+    }
+
+    var selection: SettingsDevice? { devices.first { $0.id == selectedID } }
+    var selectedDevice: DeviceIdentity? { selection?.identity }
+
+    func refreshAccessibility() {
+        accessibilityGranted = AXIsProcessTrusted()
+    }
 
     func refresh() async {
         guard !isSaving else { return }
         ready = false
         generation += 1
         let request = generation
-        accessibilityGranted = AXIsProcessTrusted()
+        refreshAccessibility()
         let connected = connectedDevices()
         seenNonMouseModels.formUnion(connected.filter { $0.category == .other }.map(SettingsDevice.modelKey))
         seenNonMouseModels.subtract(connected.filter { $0.category == .mouse }.map(SettingsDevice.modelKey))
@@ -92,9 +105,10 @@ struct SettingsDevice: Identifiable, Sendable {
         }
     }
 
-    func set(_ field: String, value: String, for deviceID: String? = nil) async {
-        guard deviceID == nil || deviceID == selectedID else { return }
-        guard ready, !isSaving, let device = selectedDevice else { return }
+    @discardableResult
+    func set(_ field: String, value: String, for deviceID: String? = nil) async -> Bool {
+        guard deviceID == nil || deviceID == selectedID else { return false }
+        guard ready, !isSaving, let device = selectedDevice else { return false }
         isSaving = true
         generation += 1
         let request = generation
@@ -103,43 +117,54 @@ struct SettingsDevice: Identifiable, Sendable {
             _ = try await file.edit(field, value: value, device: device)
             try await readSelection(request: request)
             error = nil
-            message = "Saved. Changes apply immediately."
             didSave?()
-        } catch { self.error = error.localizedDescription }
+            return true
+        } catch {
+            self.error = error.localizedDescription
+            return false
+        }
     }
 
     func export(to url: URL) async {
         guard !isSaving else { return }
         isSaving = true
-        defer { isSaving = false }
+        transferInProgress = "Exporting settings…"
+        transferError = nil
+        transferMessage = nil
+        defer {
+            isSaving = false
+            transferInProgress = nil
+        }
         do {
             try await file.export(to: url, preferences: preferences.exportedValues)
-            error = nil
-            message = "Settings exported."
-        } catch { self.error = error.localizedDescription }
+            transferMessage = "Exported to \(url.lastPathComponent)."
+        } catch { transferError = error.localizedDescription }
     }
 
     func importSettings(from url: URL) async {
         guard !isSaving else { return }
         isSaving = true
+        transferInProgress = "Importing settings…"
+        transferError = nil
+        transferMessage = nil
         do {
             let bundle = try await file.importBundle(from: url, currentPreferences: preferences.exportedValues)
             preferences.applyImportedValues(bundle.preferences)
-            error = nil
-            message = "Settings imported. The previous configuration was backed up."
+            transferMessage = "Settings imported. A backup was saved beside config.yaml."
             didSave?()
-        } catch { self.error = error.localizedDescription }
+        } catch { transferError = error.localizedDescription }
         isSaving = false
-        if error == nil { await refresh() }
+        transferInProgress = nil
+        if transferError == nil { await refresh() }
     }
 
     func showExportPanel() {
         let panel = NSSavePanel()
+        panel.allowedContentTypes = [.json]
         panel.nameFieldStringValue = "MouseService-settings.json"
         panel.title = "Export MouseService Settings"
-        panel.begin { [weak self] response in
-            guard response == .OK, let url = panel.url else { return }
-            Task { @MainActor in await self?.export(to: url) }
+        present(panel) { [weak self] url in
+            await self?.export(to: url)
         }
     }
 
@@ -149,9 +174,22 @@ struct SettingsDevice: Identifiable, Sendable {
         panel.allowsMultipleSelection = false
         panel.title = "Import MouseService Settings"
         panel.message = "Replaces device rules and the preferences in this file. The previous configuration is backed up."
-        panel.begin { [weak self] response in
+        panel.prompt = "Import"
+        present(panel) { [weak self] url in
+            await self?.importSettings(from: url)
+        }
+    }
+
+    private func present(_ panel: NSSavePanel, action: @escaping @MainActor (URL) async -> Void) {
+        guard !isSaving else { return }
+        let completion: @MainActor (NSApplication.ModalResponse) -> Void = { response in
             guard response == .OK, let url = panel.url else { return }
-            Task { @MainActor in await self?.importSettings(from: url) }
+            Task { await action(url) }
+        }
+        if let window = NSApp.keyWindow, window.attachedSheet == nil {
+            panel.beginSheetModal(for: window, completionHandler: completion)
+        } else {
+            panel.begin(completionHandler: completion)
         }
     }
 
