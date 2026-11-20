@@ -296,8 +296,10 @@ import SettingsKit
     @objc private func openSettings() {
         let window = settingsWindow ?? deviceSettings.makeSettingsWindow()
         settingsWindow = window
-        NSApp.activate()
         window.show(page: nil)
+        // A status menu can open while another app is active.
+        window.window?.orderFrontRegardless()
+        NSApp.activate()
         Task { await deviceSettings.refresh() }
     }
 }
