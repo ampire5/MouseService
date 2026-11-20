@@ -6,9 +6,10 @@ cd "$(dirname "$0")/.."
 swift build -c release
 app=build/MouseService.app
 rm -rf "$app"
-mkdir -p "$app/Contents/MacOS"
+mkdir -p "$app/Contents/MacOS" "$app/Contents/Resources"
 cp "$(swift build -c release --show-bin-path)/MouseService" "$app/Contents/MacOS/MouseService"
 cp Resources/Info.plist "$app/Contents/Info.plist"
+cp Resources/AppIcon.icns "$app/Contents/Resources/"
 # The Accessibility permission is tied to the signature's designated requirement. With the local self-signed identity
 # "Local Code Signing" (login keychain) that is the bundle ID and the certificate, the same for every build; ad hoc it
 # is the build's own hash, and every new build must be allowed again.
