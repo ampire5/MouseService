@@ -396,6 +396,12 @@ final class ScrollRules: Sendable {
         if let curve {
             curveApplied = set(PointerAccelerationCurve.property, curve.hidValue)
             device.curveNeedsRestore = device.curveNeedsRestore || curveApplied
+        } else if device.identity.category == .mouse {
+            // The HID filter can retain an override after a restart without exposing it to property readers.
+            // Clear it explicitly so the macOS profile uses the device's native curves.
+            if set(PointerAccelerationCurve.property, NSArray()) {
+                device.curveNeedsRestore = device.original.curve.count > 0
+            }
         } else if device.curveNeedsRestore {
             device.curveNeedsRestore = !set(PointerAccelerationCurve.property, device.original.curve)
         }

@@ -9,6 +9,7 @@ import PointerCore
     let identity = DeviceIdentity(vendorID: 0x1234, productID: 0x5678, category: .mouse)
     let accelerationKey = "HIDMouseAcceleration"
     var acceptsWrites = true
+    var hidesUserCurve = false
     var properties: [String: CFTypeRef] = [
         "HIDPointerResolution": NSNumber(value: 400 * 65536),
         "HIDMouseAcceleration": NSNumber(value: 65536),
@@ -17,7 +18,10 @@ import PointerCore
     var writes = 0
 
     init(_ id: UInt64) { self.id = id }
-    func property(_ key: String) -> CFTypeRef? { properties[key] }
+    func property(_ key: String) -> CFTypeRef? {
+        if hidesUserCurve && key == "UserPointerAccelCurvesKey" { return nil }
+        return properties[key]
+    }
     func setProperty(_ key: String, _ value: CFTypeRef) -> Bool {
         writes += 1
         guard acceptsWrites else { return false }
@@ -70,6 +74,18 @@ private func writePointerConfig(to url: URL) throws {
     pointer.reload()
     pointer.rescan()
     return pointer
+}
+
+@Test @MainActor func startupInMacOSProfileClearsUnreadableUserCurve() throws {
+    let service = HIDService(1)
+    // The system filter can keep a curve from an earlier process without exposing it to property readers.
+    service.hidesUserCurve = true
+    service.properties["UserPointerAccelCurvesKey"] = [["HIDAccelIndex": 65536, "HIDAccelGainLinear": 28180]] as NSArray
+
+    _ = try configuredPointer { [service] }
+
+    #expect((service.properties["UserPointerAccelCurvesKey"] as? NSArray)?.count == 0)
+    #expect((service.properties["HIDMouseAcceleration"] as? NSNumber)?.intValue == 16384)
 }
 
 @Test @MainActor func startupFindsScrollDevicePublishedAfterFirstScan() async throws {
