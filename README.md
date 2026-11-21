@@ -133,7 +133,8 @@ mouse.start()
 
 ## Private interfaces
 
-The gestures use IOKit's `IOHIDEventCreate` and SkyLight's `SLEventSetIOHIDEvent`. The device rules use
+Dock swipes use CoreGraphics event fields on macOS 26. On macOS 27, they use IOKit's `IOHIDEventCreate` and
+SkyLight's `SLEventSetIOHIDEvent`. The device rules use
 `IOHIDEventSystemClientCreate`, `CGEventCopyIOHIDEvent` and `IOHIDEventGetSenderID`. All are checked on macOS 27.0.1;
 without them that part is off and the menu says so.
 
