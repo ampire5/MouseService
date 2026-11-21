@@ -35,13 +35,15 @@ final class TouchSynth: @unchecked Sendable {
     }
 
     /// Called on the tap's thread, as every other method here.
-    func post(_ swipe: SideButtonGesture.DockSwipe, repeatOn queue: DispatchQueue) {
+    @discardableResult
+    func post(_ swipe: SideButtonGesture.DockSwipe, repeatOn queue: DispatchQueue) -> Bool {
         if swipe.phase == .began { cancelEndRepeats() }
         let events = dockSwipeEvents(swipe)
         for event in events { event.post(tap: .cgSessionEventTap) }
         if !events.isEmpty && (swipe.phase == .ended || swipe.phase == .cancelled) {
             repeatEnd(events, on: queue)
         }
+        return !events.isEmpty
     }
 
     func dockSwipeEvents(_ swipe: SideButtonGesture.DockSwipe) -> [CGEvent] {
@@ -90,8 +92,9 @@ final class TouchSynth: @unchecked Sendable {
     }
 
     /// A page swipe (Safari's and Finder's back / forward): a gesture event with the CGEvent fields, unchanged on 27.
-    func postPageSwipe(_ button: SideButtonGesture.Button) {
-        guard let event = CGEvent(source: nil) else { return }
+    @discardableResult
+    func postPageSwipe(_ button: SideButtonGesture.Button) -> Bool {
+        guard let event = CGEvent(source: nil) else { return false }
         let f = { (n: UInt32) in CGEventField(rawValue: n)! }
         event.setIntegerValueField(f(55), value: 29)   // NSEventTypeGesture
         event.setIntegerValueField(f(110), value: 16)  // kIOHIDEventTypeNavigationSwipe
@@ -101,6 +104,7 @@ final class TouchSynth: @unchecked Sendable {
         event.setIntegerValueField(f(115), value: 0)
         event.setIntegerValueField(f(132), value: 4)   // ended
         event.post(tap: .cghidEventTap)
+        return true
     }
 
     private func repeatEnd(_ events: [CGEvent], on queue: DispatchQueue) {

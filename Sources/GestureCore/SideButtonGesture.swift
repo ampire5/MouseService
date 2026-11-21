@@ -2,7 +2,7 @@
 /// swipe; back held and dragged is a three-finger swipe that follows the hand — sideways between Spaces, up to Mission
 /// Control, down to App Exposé. Pure: events in, what to post out. The caller swallows every event of both buttons.
 public struct SideButtonGesture: Sendable {
-    public enum Button: Sendable { case back, forward }
+    public enum Button: String, Sendable { case back, forward }
 
     public enum Axis: Sendable, Equatable { case horizontal, vertical }
 
@@ -26,7 +26,9 @@ public struct SideButtonGesture: Sendable {
     }
 
     public struct Settings: Sendable, Equatable {
-        /// How far (points) the back button must be dragged before it is a swipe and not a click.
+        /// Nil disables hold-and-drag gestures.
+        public var dragButton: Button? = .back
+        /// How far (points) the selected button must be dragged before it is a swipe and not a click.
         public var threshold: Double = 6
         /// A press held longer than this and released without a drag is nothing: a long press belongs to the apps
         /// that hear the button themselves (FrameScrub's and Loupe's own long presses).
@@ -44,7 +46,7 @@ public struct SideButtonGesture: Sendable {
         case idle
         /// A button is down; `moved` is the drag so far (back only), not yet past the threshold.
         case pressed(Button, at: Double, moved: (x: Double, y: Double))
-        case swiping(Axis, progress: Double, lastStep: Double)
+        case swiping(Button, Axis, progress: Double, lastStep: Double)
     }
 
     private var state = State.idle
@@ -56,8 +58,9 @@ public struct SideButtonGesture: Sendable {
     /// Whether the back button is held and pointer movement can start or continue a swipe.
     public var isTrackingMovement: Bool {
         switch state {
-        case .pressed(.back, _, _), .swiping: true
-        default: false
+        case let .pressed(button, _, _): button == settings.dragButton
+        case .swiping: true
+        case .idle: false
         }
     }
 
@@ -76,21 +79,21 @@ public struct SideButtonGesture: Sendable {
     /// A drag of `dx`, `dy` points (y down, as CGEvent deltas) while a button is down.
     public mutating func drag(dx: Double, dy: Double) -> [Output] {
         switch state {
-        case let .pressed(.back, at, moved):
+        case let .pressed(button, at, moved) where button == settings.dragButton:
             let x = moved.x + dx, y = moved.y + dy
             guard (x * x + y * y).squareRoot() >= settings.threshold else {
-                state = .pressed(.back, at: at, moved: (x, y))
+                state = .pressed(button, at: at, moved: (x, y))
                 return []
             }
             let axis: Axis = abs(x) >= abs(y) ? .horizontal : .vertical
             // The Dock ignores a swipe whose first event has no progress (macOS 27.0.1): it begins with the drag so far.
             let step = self.step(axis, dx: x, dy: y)
-            state = .swiping(axis, progress: step, lastStep: step)
+            state = .swiping(button, axis, progress: step, lastStep: step)
             return [.freezePointer(true), .dockSwipe(DockSwipe(axis: axis, phase: .began, progress: step, velocity: 0))]
-        case let .swiping(axis, progress, _):
+        case let .swiping(button, axis, progress, _):
             let step = self.step(axis, dx: dx, dy: dy)
             guard step != 0 else { return [] }
-            state = .swiping(axis, progress: progress + step, lastStep: step)
+            state = .swiping(button, axis, progress: progress + step, lastStep: step)
             return [.dockSwipe(DockSwipe(axis: axis, phase: .changed, progress: progress + step, velocity: 0))]
         default:
             return []
@@ -102,7 +105,7 @@ public struct SideButtonGesture: Sendable {
         case let .pressed(pressed, at, _) where pressed == button:
             state = .idle
             return time - at <= settings.clickDuration ? [.pageSwipe(button)] : []
-        case .swiping where button == .back:
+        case let .swiping(held, _, _, _) where button == held:
             let out = finish()
             state = .idle
             return out
@@ -114,7 +117,7 @@ public struct SideButtonGesture: Sendable {
     /// Everything stops now (the tap was switched off, the service quits, gestures were turned off): a swipe under way
     /// is cancelled and the pointer moves again. Safe to call at any time.
     public mutating func cancel() -> [Output] {
-        guard case let .swiping(axis, progress, _) = state else {
+        guard case let .swiping(_, axis, progress, _) = state else {
             state = .idle
             return []
         }
@@ -127,7 +130,7 @@ public struct SideButtonGesture: Sendable {
     /// (`.cancelled`). The velocity has the opposite sign of the progress, as the Dock reads it (Mac Mouse Fix's events
     /// on macOS 27.0.1: progress 0.128, velocity −0.81).
     private func finish() -> [Output] {
-        guard case let .swiping(axis, progress, lastStep) = state else { return [] }
+        guard case let .swiping(_, axis, progress, lastStep) = state else { return [] }
         let phase: Phase = (lastStep >= 0) == (progress >= 0) ? .ended : .cancelled
         return [.dockSwipe(DockSwipe(axis: axis, phase: phase, progress: progress, velocity: -lastStep * 100)),
                 .freezePointer(false)]

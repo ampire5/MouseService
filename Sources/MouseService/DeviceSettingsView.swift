@@ -12,10 +12,20 @@ extension DeviceSettingsController {
                     DeviceChooser(controller: self)
                 },
             ]),
+            SettingsSection("Application Rules", rows: [
+                .custom("Application rules", searchTexts: { ["app", "application", "profile", "override", "inherit"] }) {
+                    if self.selectedDevice != nil {
+                        ApplicationChooser(controller: self)
+                    } else {
+                        UnavailableMouseSetting("Select a mouse to edit its application rules.")
+                    }
+                },
+            ]),
             SettingsSection("Pointer", rows: [
                 .custom("Pointer controls", searchTexts: { ["speed", "acceleration", "profile", "windows", "libinput", "linear"] }) {
                     if self.selectedDevice != nil {
-                        PointerControls(controller: self).id(self.selectedID)
+                        PointerControls(controller: self)
+                            .id(SettingsScope(mouse: self.selectedID, application: self.selectedApplicationID))
                     } else {
                         UnavailableMouseSetting("Select a mouse to adjust its tracking.")
                     }
@@ -27,13 +37,20 @@ extension DeviceSettingsController {
                 }) {
                     if self.selectedDevice != nil {
                         ScrollControls(controller: self)
+                            .id(SettingsScope(mouse: self.selectedID, application: self.selectedApplicationID))
                     } else {
                         UnavailableMouseSetting("Select a mouse to adjust its scrolling.")
                     }
                 },
             ]),
         ]), SettingsPage("mouse", "Buttons & Wheel", symbol: "hand.point.up.left", sections:
-            ServiceSettings.controlSections + [
+            [
+                ServiceSettings.sideButtonSection,
+                SettingsSection("Gesture Test", rows: [
+                    .custom("Check side-button gestures", searchTexts: { ["test", "diagnostics", "gestures"] }) {
+                        GestureTestControls(controller: self)
+                    },
+                ]),
                 SettingsSection("Accessibility", rows: [
                     .custom("Gesture permission", searchTexts: { ["permission", "accessibility", "gestures"] }) {
                         AccessibilitySetting(controller: self)
@@ -41,7 +58,7 @@ extension DeviceSettingsController {
                             .padding(14)
                     },
                 ]),
-            ]
+            ] + ServiceSettings.wheelAndHapticSections
         ), SettingsPage("transfer", "Import & Export", symbol: "arrow.up.arrow.down", sections: [
             SettingsSection("Back Up or Move Settings", rows: [
                 .custom("Import and export settings", searchTexts: { ["backup", "export", "import", "restore", "json"] }) {
@@ -55,6 +72,11 @@ extension DeviceSettingsController {
         guard let url = URL(string: "x-apple.systempreferences:com.apple.preference.security?Privacy_Accessibility") else { return }
         NSWorkspace.shared.open(url)
     }
+}
+
+private struct SettingsScope: Hashable {
+    let mouse: String
+    let application: String?
 }
 
 private struct DeviceChooser: View {
@@ -86,7 +108,7 @@ private struct DeviceChooser: View {
                     Spacer(minLength: 0)
                 }
                 .help("Device ID \(SettingsDevice.modelKey(device.identity))")
-                Text("Changes save automatically. App-specific rules take precedence.")
+                Text("Changes save automatically.")
                     .font(.subheadline)
                     .foregroundStyle(.secondary)
             } else if controller.ready {
@@ -116,6 +138,90 @@ private struct DeviceChooser: View {
         .padding(14)
         .onChange(of: controller.error) { _, error in
             if let error { AccessibilityNotification.Announcement(error).post() }
+        }
+    }
+}
+
+private struct ApplicationChooser: View {
+    let controller: DeviceSettingsController
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            ViewThatFits(in: .horizontal) {
+                HStack(spacing: 12) {
+                    applicationPicker.fixedSize()
+                    Spacer(minLength: 0)
+                    chooseButton
+                }
+                VStack(alignment: .leading, spacing: 8) {
+                    applicationPicker
+                    chooseButton
+                }
+            }
+            if let id = controller.selectedApplicationID {
+                Text(id)
+                    .font(.subheadline)
+                    .foregroundStyle(.secondary)
+                    .textSelection(.enabled)
+            } else {
+                Text("Choose an application to customize tracking and scrolling for it.")
+                    .font(.subheadline)
+                    .foregroundStyle(.secondary)
+            }
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .padding(14)
+        .disabled(!controller.ready || controller.isSaving)
+    }
+
+    private var applicationPicker: some View {
+        Picker("Edit settings for", selection: Binding(get: { controller.selectedApplicationID }, set: { id in
+            Task { await controller.selectApplication(id) }
+        })) {
+            Text("Mouse Defaults").tag(nil as String?)
+            ForEach(controller.applicationChoices, id: \.self) { id in
+                Text(controller.applicationTitle(id)).tag(Optional(id))
+            }
+        }
+    }
+
+    private var chooseButton: some View {
+        Button("Choose Application…", action: controller.showApplicationPanel)
+    }
+}
+
+private struct AppFieldStatus: View {
+    let controller: DeviceSettingsController
+    let field: String
+    let title: LocalizedStringKey
+
+    var body: some View {
+        if let app = controller.selectedApplicationID, let setting = controller.appFields[field] {
+            let mouse = controller.selectedID
+            HStack(spacing: 8) {
+                Text(sourceLabel(setting))
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                    .accessibilityLabel(Text("\(Text(title)), \(Text(sourceLabel(setting)))"))
+                Spacer()
+                if setting.canReset {
+                    Button("Reset") { Task { await controller.set(field, value: nil, for: mouse, app: app) } }
+                        .accessibilityLabel(Text("Reset \(Text(title))"))
+                } else if let value = setting.value {
+                    Button("Override") { Task { await controller.set(field, value: value, for: mouse, app: app) } }
+                        .accessibilityLabel(Text("Override \(Text(title))"))
+                        .help("Save the current value for this application.")
+                }
+            }
+            .controlSize(.small)
+        }
+    }
+
+    private func sourceLabel(_ setting: DeviceConfigDocument.Setting) -> LocalizedStringKey {
+        switch setting.source {
+        case .mouseDefault: "Mouse default"
+        case .modelApp: "App rule for this mouse model"
+        case .mouseApp: "App override"
         }
     }
 }
@@ -161,12 +267,13 @@ private struct PointerControls: View {
 
     var body: some View {
         let selection = controller.selectedID
+        let app = controller.selectedApplicationID
         VStack(alignment: .leading, spacing: 12) {
             HStack {
                 Text("Tracking profile").accessibilityHidden(true)
                 Spacer()
                 Picker("Tracking profile", selection: Binding(get: { controller.pointerProfile }, set: { profile in
-                    Task { await controller.set("pointer-profile", value: profile.rawValue, for: selection) }
+                    Task { await controller.set("pointer-profile", value: profile.rawValue, for: selection, app: app) }
                 })) {
                     ForEach(PointerProfile.allCases, id: \.self) { profile in
                         Text(profile.title).tag(profile)
@@ -178,26 +285,33 @@ private struct PointerControls: View {
             Text(controller.pointerProfile.hint)
                 .font(.subheadline)
                 .foregroundStyle(.secondary)
+            AppFieldStatus(controller: controller, field: "pointer-profile", title: "tracking profile")
             Divider()
             SensitivityControl(title: "Tracking speed", value: controller.speed, range: 0...1) {
-                await controller.set("speed", value: $0, for: selection)
+                await controller.set("speed", value: $0, for: selection, app: app)
             }
+            AppFieldStatus(controller: controller, field: "speed", title: "tracking speed")
             if controller.pointerProfile == .macOS {
                 Divider()
                 HStack {
                     Text("Pointer acceleration").accessibilityHidden(true)
                     Spacer()
                     Toggle("Pointer acceleration", isOn: Binding(get: { !controller.disableAcceleration }, set: { enabled in
-                        Task { await controller.set("disable-acceleration", value: enabled ? "no" : "yes", for: selection) }
+                        Task {
+                            await controller.set("disable-acceleration", value: enabled ? "no" : "yes",
+                                                 for: selection, app: app)
+                        }
                     }))
                     .labelsHidden()
                     .toggleStyle(.switch)
                     .accessibilityLabel("Pointer acceleration")
                 }
+                AppFieldStatus(controller: controller, field: "disable-acceleration", title: "pointer acceleration")
                 if !controller.disableAcceleration {
                     SensitivityControl(title: "Acceleration", value: controller.acceleration, range: 0...40) {
-                        await controller.set("acceleration", value: $0, for: selection)
+                        await controller.set("acceleration", value: $0, for: selection, app: app)
                     }
+                    AppFieldStatus(controller: controller, field: "acceleration", title: "acceleration amount")
                 }
             }
         }
@@ -342,6 +456,7 @@ private struct ScrollControls: View {
 
     var body: some View {
         let selection = controller.selectedID
+        let app = controller.selectedApplicationID
         VStack(alignment: .leading, spacing: 12) {
             if !controller.accessibilityGranted {
                 AccessibilitySetting(controller: controller, showsGranted: false)
@@ -352,7 +467,7 @@ private struct ScrollControls: View {
                     Text("Reverse direction").accessibilityHidden(true)
                     Spacer()
                     Picker("Reverse direction", selection: Binding(get: { controller.reverse }, set: { value in
-                        Task { await controller.set("reverse-scroll", value: value, for: selection) }
+                        Task { await controller.set("reverse-scroll", value: value, for: selection, app: app) }
                     })) {
                         Text("Off").tag("none")
                         Text("Vertical").tag("vertical")
@@ -362,6 +477,7 @@ private struct ScrollControls: View {
                     .labelsHidden()
                     .accessibilityLabel("Reverse direction")
                 }
+                AppFieldStatus(controller: controller, field: "reverse-scroll", title: "reverse direction")
                 Divider()
                 Text("Ignore scrolling while holding any selected key.")
                     .font(.subheadline)
@@ -376,6 +492,7 @@ private struct ScrollControls: View {
 
     private func modifierRow(_ axis: String, field: String, value: String) -> some View {
         let selection = controller.selectedID
+        let app = controller.selectedApplicationID
         let chosen = Set(value.split(separator: ",").map(String.init))
         return VStack(alignment: .leading, spacing: 6) {
             Text(axis).font(.subheadline.weight(.medium)).accessibilityAddTraits(.isHeader)
@@ -385,12 +502,14 @@ private struct ScrollControls: View {
                         var updated = chosen
                         if enabled { updated.insert(key) } else { updated.remove(key) }
                         let text = modifiers.map(\.0).filter { updated.contains($0) }.joined(separator: ",")
-                        Task { await controller.set(field, value: text, for: selection) }
+                        Task { await controller.set(field, value: text, for: selection, app: app) }
                     }))
                     .toggleStyle(.checkbox)
                     .accessibilityLabel("\(axis) scrolling, \(title)")
                 }
             }
+            AppFieldStatus(controller: controller, field: field,
+                           title: field == "ignore-vertical-scroll-with" ? "vertical scroll modifiers" : "horizontal scroll modifiers")
         }
     }
 }

@@ -106,3 +106,63 @@ private let documentMouse = DeviceIdentity(vendorID: 0x46d, productID: 0xc548, p
     #expect(try DeviceRules(yaml: edited).resolve(unit, app: "editor").pointer.speed == 0.3)
     #expect(try DeviceRules(yaml: edited).resolve(unit, app: nil).pointer.speed == 0.6)
 }
+
+@Test func applicationFieldsReportTheRuleThatWinsInFileOrder() throws {
+    var unit = documentMouse
+    unit.serialNumber = "one"
+    let yaml = """
+    devices:
+      Exact: {id: '46d:c548', serial: one, apps: {editor: {speed: 0.1}}}
+      Generic: {id: '46d:c548', speed: 0.3, apps: {editor: {reverse-scroll: vertical}}}
+      Other Unit: {id: '46d:c548', serial: two, apps: {browser: {speed: 0.2}}}
+    """
+    let settings = try DeviceConfigDocument.settings(for: unit, app: "editor", in: yaml)
+    #expect(settings.applicationIDs == ["editor"])
+    #expect(settings.fields["speed"]?.value == "0.3")
+    #expect(settings.fields["speed"]?.source == .mouseDefault)
+    #expect(settings.fields["speed"]?.canReset == true)
+    #expect(settings.fields["reverse-scroll"]?.source == .modelApp)
+    #expect(settings.fields["reverse-scroll"]?.canReset == false)
+}
+
+@Test func applicationEditAndResetAffectOnlyTheSelectedMouseAndField() throws {
+    var unit = documentMouse
+    unit.serialNumber = "one"
+    let original = """
+    future: [document]
+    devices:
+      Exact: {id: '46d:c548', serial: one, apps: {editor: {speed: 0.1, future: [app]}}}
+      Generic: {id: '46d:c548', speed: 0.3, apps: {editor: {speed: 0.6}, browser: {speed: 0.7}}}
+    """
+    let edited = try DeviceConfigDocument.setting("speed", to: "0.8", for: unit, app: "editor", in: original)
+    let rules = try DeviceRules(yaml: edited)
+    #expect(rules.resolve(unit, app: nil).pointer.speed == 0.3)
+    #expect(rules.resolve(unit, app: "editor").pointer.speed == 0.8)
+    #expect(rules.resolve(unit, app: "browser").pointer.speed == 0.7)
+    #expect(rules.resolve(documentMouse, app: "editor").pointer.speed == 0.6)
+    #expect(try DeviceConfigDocument.settings(for: unit, app: "editor", in: edited)
+        .fields["speed"]?.source == .mouseApp)
+
+    let reset = try DeviceConfigDocument.setting("speed", to: nil, for: unit, app: "editor", in: edited)
+    let resetSettings = try DeviceConfigDocument.settings(for: unit, app: "editor", in: reset)
+    #expect(resetSettings.fields["speed"]?.value == "0.6")
+    #expect(resetSettings.fields["speed"]?.source == .modelApp)
+    #expect(resetSettings.fields["speed"]?.canReset == false)
+    let before = try #require(try compose(yaml: original))
+    let after = try #require(try compose(yaml: reset))
+    #expect(after["future"] == before["future"])
+    #expect(after["devices"]?["Generic"] == before["devices"]?["Generic"])
+    #expect(after["devices"]?["Exact"]?["apps"]?["editor"]?["future"] ==
+            before["devices"]?["Exact"]?["apps"]?["editor"]?["future"])
+}
+
+@Test func resettingTheLastAppFieldRemovesTheEmptyRule() throws {
+    let yaml = try DeviceConfigDocument.setting("ignore-vertical-scroll-with", to: "", for: documentMouse,
+                                               app: "editor", in: "")
+    let settings = try DeviceConfigDocument.settings(for: documentMouse, app: "editor", in: yaml)
+    #expect(settings.applicationIDs == ["editor"])
+    #expect(settings.fields["ignore-vertical-scroll-with"]?.source == .mouseApp)
+    let reset = try DeviceConfigDocument.setting("ignore-vertical-scroll-with", to: nil, for: documentMouse,
+                                                app: "editor", in: yaml)
+    #expect(try DeviceConfigDocument.settings(for: documentMouse, in: reset).applicationIDs.isEmpty)
+}

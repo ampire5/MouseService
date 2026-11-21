@@ -9,10 +9,11 @@ extension ClientMessage {
     public func xpc() -> xpc_object_t {
         let d = Writer()
         switch self {
-        case let .hello(version, bundleID):
+        case let .hello(version, bundleID, swipeLifecycle):
             d.type("hello")
             d.string("version", version.text)
             d.string("bundleID", bundleID)
+            if swipeLifecycle { d.bool("swipeLifecycle", true) }
         case let .want(want):
             d.type("want")
             d.controls("divert", want.divert)
@@ -34,7 +35,7 @@ extension ClientMessage {
             guard let version = d.string("version").flatMap(ContractVersion.init), let bundleID = d.string("bundleID") else {
                 return nil
             }
-            self = .hello(version: version, bundleID: bundleID)
+            self = .hello(version: version, bundleID: bundleID, swipeLifecycle: d.bool("swipeLifecycle") ?? false)
         case "want":
             guard let divert = d.controls("divert"), let watch = d.controls("watch"), let thumbWheel = d.bool("thumbWheel"),
                   let wheel = d.array("wheel") else { return nil }
@@ -90,10 +91,11 @@ extension ServiceMessage {
     public func xpc() -> xpc_object_t {
         let d = Writer()
         switch self {
-        case let .welcome(serviceVersion, device):
+        case let .welcome(serviceVersion, device, swipeLifecycle):
             d.type("welcome")
             d.string("serviceVersion", serviceVersion)
             d.set("device", Self.encode(device))
+            if swipeLifecycle { d.bool("swipeLifecycle", true) }
         case let .refused(reason):
             d.type("refused")
             d.string("reason", reason)
@@ -112,6 +114,10 @@ extension ServiceMessage {
             d.type("thumbWheel")
             d.int("delta", Int64(delta))
             d.bool("touching", touching)
+            d.string("phase", phase.rawValue)
+            d.double("time", time)
+        case let .swipe(phase, time):
+            d.type("swipe")
             d.string("phase", phase.rawValue)
             d.double("time", time)
         case let .wheel(highResolution, mode, byButton):
@@ -133,7 +139,7 @@ extension ServiceMessage {
             guard let version = d.string("serviceVersion"), let device = d.dictionary("device").flatMap(Self.decodeDevice) else {
                 return nil
             }
-            self = .welcome(serviceVersion: version, device: device)
+            self = .welcome(serviceVersion: version, device: device, swipeLifecycle: d.bool("swipeLifecycle") ?? false)
         case "refused":
             guard let reason = d.string("reason") else { return nil }
             self = .refused(reason: reason)
@@ -153,6 +159,10 @@ extension ServiceMessage {
                 return nil
             }
             self = .thumbWheel(delta: Int(delta), touching: touching, phase: phase, time: time)
+        case "swipe":
+            guard let phase = d.string("phase").flatMap(SwipePhase.init(rawValue:)),
+                  let time = d.double("time") else { return nil }
+            self = .swipe(phase: phase, time: time)
         case "wheel":
             guard let highResolution = d.bool("highResolution"), let byButton = d.bool("byButton") else { return nil }
             let mode = d.uint("mode").flatMap { UInt8(exactly: $0) }.flatMap(WheelMode.init(rawValue:))

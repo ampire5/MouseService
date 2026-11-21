@@ -9,6 +9,8 @@ struct SettingsTransfer: Codable, Sendable {
 
     static let preferenceDefaults = [
         "haptic-strength": "keep", "mx-panel-force": "0", "wheel-mode": "ratchet", "gesturesOn": "yes",
+        "side-button-page-swipes": "yes", "side-button-drag": "yes",
+        "side-button-drag-button": "back", "side-button-drag-threshold": "6",
     ]
 
     enum Invalid: LocalizedError {
@@ -25,7 +27,12 @@ struct SettingsTransfer: Codable, Sendable {
                 ? nil : "Use 0–100 or keep."
         case "mx-panel-force": return PanelForce.parse(value) == nil ? "Use 0–100, default or keep." : nil
         case "wheel-mode": return ["ratchet", "free-spin"].contains(value) ? nil : "Choose a wheel mode."
-        case "gesturesOn": return ["yes", "no"].contains(value) ? nil : "Use yes or no."
+        case "gesturesOn", "side-button-page-swipes", "side-button-drag":
+            return ["yes", "no"].contains(value) ? nil : "Use yes or no."
+        case "side-button-drag-button":
+            return ["back", "forward"].contains(value) ? nil : "Choose Back or Forward."
+        case "side-button-drag-threshold":
+            return Int(value).map { (1...30).contains($0) } == true ? nil : "Use 1–30 points."
         default: return "Unknown preference: \(key)."
         }
     }

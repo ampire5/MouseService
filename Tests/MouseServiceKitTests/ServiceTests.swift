@@ -50,6 +50,64 @@ private let gesture: UInt16 = 0xC3
         rig.shutDown()
     }
 
+    @Test(arguments: [SwipePhase.ended, .cancelled])
+    func swipeTerminalPhaseStaysWithTheOriginalClient(_ terminal: SwipePhase) async {
+        let rig = Rig()
+        let client = MouseClient(bundleID: "test.a", endpointProvider: { rig.listener.endpoint })
+        var phases: [SwipePhase] = []
+        var times: [Double] = []
+        client.onSwipe = { phase, time in
+            phases.append(phase)
+            times.append(time)
+        }
+        client.start()
+        await eventually("swipe negotiation") { client.receivesSwipeLifecycle }
+
+        rig.service.frontmost(pid: nil)
+        #expect(!rig.service.swipe(.began, time: 1))
+        rig.service.frontmost(pid: getpid())
+        #expect(!rig.service.swipe(.began, time: 1, targetPID: 1))
+        #expect(rig.service.swipe(.began, time: 2, targetPID: getpid()))
+        rig.service.frontmost(pid: nil)
+        #expect(rig.service.swipe(terminal, time: 3))
+        #expect(!rig.service.swipe(terminal, time: 4))
+        await eventually("swipe lifecycle") { phases.count >= 2 }
+        #expect(phases == [.began, terminal])
+        #expect(times == [2, 3])
+        rig.shutDown()
+    }
+
+    @Test func focusedClientWithoutSwipeCallbackUsesLegacyPath() async {
+        let rig = Rig()
+        let client = MouseClient(bundleID: "test.a", endpointProvider: { rig.listener.endpoint })
+        client.start()
+        await eventually("welcome") { client.isAvailable }
+        rig.service.frontmost(pid: getpid())
+        #expect(!client.receivesSwipeLifecycle)
+        #expect(!rig.service.swipe(.began, time: 1))
+        #expect(!rig.service.swipe(.ended, time: 2))
+        rig.shutDown()
+    }
+
+    @Test func connectionLossCancelsAnActiveSwipe() async {
+        let rig = Rig()
+        var endpoint: xpc_endpoint_t? = rig.listener.endpoint
+        let client = MouseClient(bundleID: "test.a", endpointProvider: { endpoint })
+        var phases: [SwipePhase] = []
+        client.onSwipe = { phase, _ in phases.append(phase) }
+        client.start()
+        await eventually("swipe negotiation") { client.receivesSwipeLifecycle }
+        rig.service.frontmost(pid: getpid())
+        #expect(rig.service.swipe(.began, time: 1))
+        await eventually("swipe began") { phases == [.began] }
+
+        endpoint = nil
+        rig.shutDown()
+        await eventually("lost service") { !client.isAvailable }
+        #expect(!client.receivesSwipeLifecycle)
+        #expect(phases == [.began, .cancelled])
+    }
+
     @Test func theGlobalModeIsOnTheMouseAtOnceAndAPressIsSaved() async {
         let rig = Rig()
         #expect(rig.driver.applied == [MouseState(mode: .ratchet)])
@@ -84,7 +142,7 @@ private let gesture: UInt16 = 0xC3
         xpc_connection_send_message(connection,
                                     ClientMessage.hello(version: ContractVersion(major: 2, minor: 0), bundleID: "x").xpc())
         await eventually("refusal") { heard.invalid }
-        #expect(heard.replies == [.refused(reason: "contract 2.0 not supported, service speaks 1.0")])
+        #expect(heard.replies == [.refused(reason: "contract 2.0 not supported, service speaks 1.1")])
         #expect(rig.service.clients.isEmpty)
         rig.shutDown()
     }
@@ -114,13 +172,17 @@ private let gesture: UInt16 = 0xC3
     @Test func peerCancelReleases() async {
         let rig = Rig()
         let client = MouseClient(bundleID: "test.a", endpointProvider: { rig.listener.endpoint })
+        var clientPIDs: Set<pid_t> = []
+        rig.service.onClientPIDsChange = { clientPIDs = $0 }
         client.start()
         client.want(Want(divert: [gesture]))
         rig.service.frontmost(pid: getpid())
         await eventually("applied") { rig.driver.applied.last == MouseState(divert: [gesture], mode: .ratchet) }
+        #expect(clientPIDs == [getpid()])
         client.stop()
         await eventually("released") { rig.driver.applied.last == MouseState(mode: .ratchet) }
         #expect(rig.service.clients.isEmpty)
+        #expect(clientPIDs.isEmpty)
         rig.shutDown()
     }
 

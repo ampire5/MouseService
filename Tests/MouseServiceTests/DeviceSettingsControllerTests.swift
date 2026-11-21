@@ -66,6 +66,40 @@ import PointerCore
         trackpad: true, mouse: true) == .trackpad)
 }
 
+@Test @MainActor func selectedAppEditsStaySeparateFromMouseDefaults() async throws {
+    let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+    defer { try? FileManager.default.removeItem(at: directory) }
+    let name = "MouseServiceTests.\(UUID().uuidString)"
+    let defaults = try #require(UserDefaults(suiteName: name))
+    defer { defaults.removePersistentDomain(forName: name) }
+    let file = DevicePreferencesFile(url: directory.appendingPathComponent("config.yaml"))
+    let model = DeviceSettingsController(file: file, preferences: ServiceSettings(defaults: defaults))
+    let mouse = DeviceIdentity(vendorID: 0x1234, productID: 1, category: .mouse)
+    let otherMouse = DeviceIdentity(vendorID: 0x1234, productID: 2, category: .mouse)
+    model.connectedDevices = { [mouse, otherMouse] }
+    try await file.replace(with: """
+    devices:
+      Mouse: {id: '1234:1', speed: 0.3, apps: {editor: {speed: 0.6}}}
+    """)
+    await model.refresh()
+    #expect(model.applicationIDs == ["editor"])
+    await model.selectApplication("editor")
+    #expect(model.speed == "0.6")
+    #expect(model.appFields["speed"]?.canReset == true)
+    #expect(await model.set("speed", value: "0.7", app: "editor"))
+    #expect(model.speed == "0.7")
+    #expect(await model.set("speed", value: nil, app: "editor"))
+    #expect(model.speed == "0.3")
+    #expect(model.applicationIDs.isEmpty)
+    await model.selectApplication(nil)
+    #expect(await model.set("speed", value: "0.8", app: "editor") == false)
+    await model.select(SettingsDevice.key(otherMouse))
+    #expect(model.selectedApplicationID == nil)
+    #expect(model.speed == "0.125")
+    let rules = try DeviceRules(yaml: await file.load())
+    #expect(rules.resolve(mouse, app: nil).pointer.speed == 0.3)
+}
+
 @Test @MainActor func controllerImportRejectsInvalidPreferencesWithoutChangingAnything() async throws {
     let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
     defer { try? FileManager.default.removeItem(at: directory) }

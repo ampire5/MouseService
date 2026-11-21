@@ -4,6 +4,7 @@ import MouseClient
 import MouseContract
 import MouseCore
 import MouseServiceKit
+import os
 import ServiceManagement
 import SettingsKit
 
@@ -21,6 +22,8 @@ import SettingsKit
     private var statusItem: NSStatusItem?
     private weak var mouseStatusItem: NSMenuItem?
     private let synth = TouchSynth()
+    private let clickTargets = OSAllocatedUnfairLock(initialState: SideButtonTap.ClickTargets())
+    private let gestureDiagnostics = GestureDiagnostics()
     private var tap: SideButtonTap?
     private let pointer = PointerDevices()
     private var scrollTap: ScrollTap?
@@ -33,7 +36,14 @@ import SettingsKit
     private var settingsWindow: SettingsWindowController?
     private lazy var deviceSettings: DeviceSettingsController = {
         let controller = DeviceSettingsController(file: DevicePreferencesFile(url: PointerDevices.configURL),
-                                                  preferences: settings)
+                                                  preferences: settings, gestureDiagnostics: gestureDiagnostics)
+        controller.gestureServiceStatus = { [weak self] testClient in
+            let client = self?.service?.clients.first { peer in testClient.map { $0 == peer.pid } ?? peer.owner }
+            return GestureServiceStatus(version: Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString")
+                                            as? String ?? "Unknown version",
+                                        activeClient: client?.bundleID, listening: self?.tap != nil)
+        }
+        controller.gestureTestChanged = { [weak self] in self?.updateTap() }
         controller.connectedDevices = { [weak self] in self?.pointer.connectedDevices ?? [] }
         controller.didSave = { [weak self] in
             Task { await self?.pointer.reloadFromDisk() }
@@ -98,7 +108,11 @@ import SettingsKit
         }
         let tracker = PointerTracker { [weak service] place in service?.pointer(place) }
         service.onFollowsPointerChange = { [weak tracker] on in tracker?.setActive(on) }
-        frontmostTracker = FrontmostTracker { [weak service, weak tracker] pid in
+        service.onClientPIDsChange = { [clickTargets] pids in
+            clickTargets.withLock { $0.clients = pids }
+        }
+        frontmostTracker = FrontmostTracker { [clickTargets, weak service, weak tracker] pid in
+            clickTargets.withLock { $0.frontmost = pid }
             service?.frontmost(pid: pid)
             tracker?.invalidate()
         }
@@ -175,10 +189,18 @@ import SettingsKit
     }
 
     private func updateTap() {
-        let wanted = gesturesOn && synth != nil && AXIsProcessTrusted()
+        let wanted = (gesturesOn || gestureDiagnostics.isRunning) && synth != nil && AXIsProcessTrusted()
+        let preferences = settings.sideButtons
         if wanted, tap == nil, let synth {
-            let tap = SideButtonTap(synth: synth)
+            let tap = SideButtonTap(synth: synth, clickTargets: clickTargets, preferences: preferences,
+                                    diagnostics: gestureDiagnostics) { [weak self] phase, time, pid in
+                DispatchQueue.main.async {
+                    _ = self?.service?.swipe(phase, time: time, targetPID: pid)
+                }
+            }
             if tap.start() { self.tap = tap }
+        } else if wanted {
+            tap?.updatePreferences(preferences)
         } else if !wanted, let tap {
             tap.stop()
             self.tap = nil
@@ -207,9 +229,9 @@ import SettingsKit
 
     func menuNeedsUpdate(_ menu: NSMenu) {
         menu.removeAllItems()
-        let settings = item("Settings…", #selector(openSettings))
-        settings.keyEquivalent = ","
-        menu.addItem(settings)
+        let settingsItem = item("Settings…", #selector(openSettings))
+        settingsItem.keyEquivalent = ","
+        menu.addItem(settingsItem)
         menu.addItem(.separator())
 
         let mouseStatus = NSMenuItem(title: "", action: nil, keyEquivalent: "")
@@ -218,7 +240,8 @@ import SettingsKit
         updateMouseStatus()
         driver?.refreshBattery()
         let gestures = item("Side-Button Gestures", #selector(toggleGestures))
-        gestures.state = gesturesOn ? .on : .off
+        let controls = settings.sideButtons
+        gestures.state = controls.pageSwipes && controls.dragButton != nil ? .on : (gesturesOn ? .mixed : .off)
         if synth == nil { gestures.action = nil }
         menu.addItem(gestures)
         if !AXIsProcessTrusted() {

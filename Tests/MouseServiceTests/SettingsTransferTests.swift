@@ -37,6 +37,29 @@ import Testing
     #expect(store.validate("sometimes", forKey: ServiceSettings.gesturesKey) != nil)
 }
 
+@Test @MainActor func dragAndPageSwipePreferencesCanBeChangedIndependently() throws {
+    let name = "MouseServiceTests.\(UUID().uuidString)"
+    let defaults = try #require(UserDefaults(suiteName: name))
+    defer { defaults.removePersistentDomain(forName: name) }
+    let store = ServiceSettings(defaults: defaults)
+    try store.setValue("no", forKey: ServiceSettings.pageSwipesKey)
+    try store.setValue("forward", forKey: ServiceSettings.dragButtonKey)
+    try store.setValue("12", forKey: ServiceSettings.dragThresholdKey)
+    #expect(!store.sideButtons.pageSwipes)
+    #expect(store.sideButtons.dragButton == .forward)
+    #expect(store.sideButtons.threshold == 12)
+    #expect(store.gesturesEnabled)
+
+    store.applyImportedValues([ServiceSettings.gesturesKey: "no"])
+    #expect(!store.sideButtons.pageSwipes)
+    #expect(store.sideButtons.dragButton == nil)
+    try store.setValue("yes", forKey: ServiceSettings.pageSwipesKey)
+    #expect(store.sideButtons.pageSwipes)
+    #expect(store.sideButtons.dragButton == nil)
+    #expect(store.validate("0", forKey: ServiceSettings.dragThresholdKey) != nil)
+    #expect(store.validate("31", forKey: ServiceSettings.dragThresholdKey) != nil)
+}
+
 @Test func settingsTransferRejectsInvalidContentBeforeApplying() throws {
     let invalid = [
         #"{"version":2,"config":"devices:\n","preferences":{}}"#,

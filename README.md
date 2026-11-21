@@ -17,9 +17,10 @@ Master 4 is handled over HID++ through [LogiHIDPP](https://github.com/ampire5/Lo
   - Open the MouseService menu to see the MX Master 4's battery percentage and charging status over Logi Bolt.
   - Design: `docs/superpowers/specs/2026-10-27-core-service-design.md`.
 - **The side buttons as a trackpad.**
-  - A click of back or forward is a page swipe.
-  - Back held and dragged is a three-finger swipe that follows the hand: sideways between Spaces, up to Mission
-    Control, down to App Exposé.
+  - A click of back or forward is a page swipe. Apps connected to MouseService receive the side-button click so they
+    can use their own button bindings.
+  - Hold the gesture button (Back by default) and drag sideways between Spaces, up to Mission Control, or down to
+    App Exposé.
 - **Pointer and wheel per device**, in `~/.config/mouseservice/config.yaml` (a device named once, its app rules nested;
   an old `devices.json` or LinearMouse's file is migrated into it at the first start): pointer speed and acceleration,
   a reversed wheel, scrolls dropped under a modifier. Design: `docs/superpowers/specs/2026-10-27-pointer-wheel-design.md`
@@ -65,14 +66,17 @@ Settings adds this field when you edit a connected mouse.
 Speed adjusts sensitivity in all four profiles. The Windows and libinput profiles use the macOS HID velocity
 estimator, so their feel depends on mouse DPI and report rate.
 
-**Buttons & Wheel** includes side-button gestures, wheel mode, haptic strength and panel force. The menu and
-Settings gesture switches stay synchronized. Accessibility permission is required for gestures and scroll rules.
+**Buttons & Wheel** lets you control page swipes on click and system gestures on drag separately. Choose Back or
+Forward as the gesture button and adjust the travel threshold. **Gesture Test** shows captured button events and
+whether MouseService posted a gesture. Accessibility permission is required for gestures and scroll rules.
+
+Under **Pointer & Scrolling → Application Rules**, choose an app for the selected mouse to edit its overrides. The
+pointer and scrolling controls show inherited settings and let you remove individual overrides.
 
 **Import & Export** transfers device rules and service preferences in one JSON file. Each import validates the
 whole file before making changes and saves the previous configuration and preferences beside `config.yaml` as
 `config.yaml.before-import-<unique-id>.json`. The first UI edit also saves the original YAML as `config.yaml.before-ui`.
 YAML formatting and comments may be normalized; device values, application rules and unknown fields are preserved.
-Application rules remain supported in YAML but have no UI in this version.
 
 ### Default sensitivity
 
@@ -125,11 +129,14 @@ import MouseContract
 
 let mouse = MouseClient()                       // bundle ID from the app
 mouse.onButton = { cid, pressed, time in … }    // HID++ control IDs, ProcessInfo.systemUptime
+mouse.onSwipe = { phase, time in … }             // .began, .ended, or .cancelled
 mouse.want(Want(divert: [0xC3]))                // the whole wish, sent again after every reconnect
 mouse.start()
 ```
 
 `swift run mouse-client-probe divert 0xC3` is a test client that prints every event with its latency.
+Set `onSwipe` before connecting. `receivesSwipeLifecycle` indicates that the service agreed to deliver swipe phases
+over XPC, so a client can ignore the legacy `local.mouseservice.swipeBegan` notification while it is connected.
 
 ## Private interfaces
 

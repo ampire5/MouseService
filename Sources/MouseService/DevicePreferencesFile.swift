@@ -22,6 +22,12 @@ actor DevicePreferencesFile {
         return edited
     }
 
+    func editApplication(_ app: String, field: String, value: String?, device: DeviceIdentity) throws {
+        let original = try load()
+        let edited = try DeviceConfigDocument.setting(field, to: value, for: device, app: app, in: original)
+        if edited != original { try replace(with: edited) }
+    }
+
     func replace(with text: String) throws {
         _ = try DeviceRules(yaml: text)
         let fm = FileManager.default
@@ -49,27 +55,7 @@ actor DevicePreferencesFile {
 
     func mice() throws -> [DeviceIdentity] { try DeviceConfigDocument.devices(in: load(), declaredCategory: .mouse) }
 
-    func values(for device: DeviceIdentity) throws -> DeviceSettingsValues {
-        let text = try load()
-        func value(_ field: String, _ fallback: String) throws -> String {
-            try DeviceConfigDocument.setting(field, for: device, in: text) ?? fallback
-        }
-        let profile = try value("pointer-profile", PointerProfile.macOS.rawValue)
-        return try DeviceSettingsValues(pointerProfile: PointerProfile(rawValue: profile) ?? .macOS,
-                                        speed: value("speed", ""), acceleration: value("acceleration", ""),
-                                        disableAcceleration: value("disable-acceleration", "no") == "yes",
-                                        reverse: value("reverse-scroll", "none"),
-                                        dropVertical: value("ignore-vertical-scroll-with", ""),
-                                        dropHorizontal: value("ignore-horizontal-scroll-with", ""))
+    func values(for device: DeviceIdentity, app: String?) throws -> DeviceConfigDocument.Settings {
+        try DeviceConfigDocument.settings(for: device, app: app, in: load())
     }
-}
-
-struct DeviceSettingsValues: Sendable {
-    var pointerProfile: PointerProfile
-    var speed: String
-    var acceleration: String
-    var disableAcceleration: Bool
-    var reverse: String
-    var dropVertical: String
-    var dropHorizontal: String
 }

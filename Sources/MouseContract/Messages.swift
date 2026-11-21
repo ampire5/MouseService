@@ -18,7 +18,8 @@ public struct ContractVersion: Comparable, Hashable, Sendable {
         self.init(major: major, minor: minor)
     }
 
-    public static let current = ContractVersion(major: 1, minor: 0)
+    public static let swipeLifecycle = ContractVersion(major: 1, minor: 1)
+    public static let current = swipeLifecycle
 
     public var text: String { "\(major).\(minor)" }
 
@@ -100,9 +101,15 @@ public enum ThumbPhase: String, Sendable {
     case began, changed, ended
 }
 
+/// The start and outcome of a side-button swipe.
+public enum SwipePhase: String, Sendable {
+    case began, ended, cancelled
+}
+
 /// Client → service.
 public enum ClientMessage: Equatable, Sendable {
-    case hello(version: ContractVersion, bundleID: String)
+    /// Request swipe events for this connection when the service supports them.
+    case hello(version: ContractVersion, bundleID: String, swipeLifecycle: Bool = false)
     case want(Want)
     /// A haptic pattern (`LogiHIDPP.HapticPattern.rawValue`), at `strength` 0…100 once or the normal strength.
     case play(pattern: UInt8, strength: UInt8?)
@@ -110,7 +117,8 @@ public enum ClientMessage: Equatable, Sendable {
 
 /// Service → client. Times are `ProcessInfo.systemUptime`.
 public enum ServiceMessage: Equatable, Sendable {
-    case welcome(serviceVersion: String, device: DeviceInfo)
+    /// Acknowledges the client's swipe subscription when `swipeLifecycle` is true.
+    case welcome(serviceVersion: String, device: DeviceInfo, swipeLifecycle: Bool = false)
     case refused(reason: String)
     /// The client owns the buttons, haptics and thumb wheel now (true) or no longer.
     case owner(Bool)
@@ -119,6 +127,7 @@ public enum ServiceMessage: Equatable, Sendable {
     case watching(Set<UInt16>)
     case button(cid: UInt16, pressed: Bool, time: Double)
     case thumbWheel(delta: Int, touching: Bool, phase: ThumbPhase, time: Double)
+    case swipe(phase: SwipePhase, time: Double)
     /// The main wheel's state, to the client under the pointer; `byButton`: the user switched it with SmartShift.
     case wheel(highResolution: Bool, mode: WheelMode?, byButton: Bool)
     case device(DeviceInfo)

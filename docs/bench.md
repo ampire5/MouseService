@@ -60,3 +60,10 @@ build system.
 
 Optional captures use the default 782 × 637 pt size in light appearance and the minimum 640 × 400 pt size in
 dark appearance. Set `MOUSESERVICE_BENCH_OUTPUT` to an existing directory when running the benchmark.
+
+### Application rules and gesture controls, 2026-11-21
+
+The same four-round check on Apple Silicon with macOS 27.2.1 measured 130.3 ms of main-thread CPU to create and
+open Settings. First visits took 18.3 ms for Buttons & Wheel and 11.6 ms for Import & Export. Return visits took
+3.0–4.3 ms. The application picker was checked at both captured window sizes and wraps its controls in the
+narrow layout.

@@ -20,6 +20,8 @@ import XPC
     public private(set) var isConnecting = false
     /// The app owns the buttons, haptics and thumb wheel now.
     public private(set) var isOwner = false
+    /// The service acknowledged this client's request for side-button swipe events.
+    public private(set) var receivesSwipeLifecycle = false
     public private(set) var device = DeviceInfo.absent
     /// The controls the mouse reports while the system still gets their buttons: drop the system's events of these.
     public private(set) var watching: Set<UInt16> = []
@@ -29,6 +31,8 @@ import XPC
     public var onOwner: ((Bool) -> Void)?
     public var onButton: ((_ cid: UInt16, _ pressed: Bool, _ time: Double) -> Void)?
     public var onThumbWheel: ((_ delta: Int, _ touching: Bool, _ phase: ThumbPhase, _ time: Double) -> Void)?
+    /// Set before starting the client to receive swipe events on the main actor.
+    public var onSwipe: ((_ phase: SwipePhase, _ time: Double) -> Void)?
     public var onWheel: ((_ highResolution: Bool, _ mode: WheelMode?, _ byButton: Bool) -> Void)?
     public var onDevice: ((DeviceInfo) -> Void)?
     public var onAvailability: ((Bool) -> Void)?
@@ -43,6 +47,7 @@ import XPC
     private var wanted: Want?
     private var sent: Want?
     private var held: Set<UInt16> = []
+    private var swipeInProgress = false
     private var activationObserver: NSObjectProtocol?
     private var startedObserver: NSObjectProtocol?
 
@@ -137,7 +142,8 @@ import XPC
     private func hello() {
         guard let connection else { return }
         isConnecting = true
-        xpc_connection_send_message(connection, ClientMessage.hello(version: .current, bundleID: bundleID).xpc())
+        let message = ClientMessage.hello(version: .current, bundleID: bundleID, swipeLifecycle: onSwipe != nil)
+        xpc_connection_send_message(connection, message.xpc())
         sent = nil
         if let wanted { want(wanted) }
     }
@@ -163,10 +169,11 @@ import XPC
         }
         guard let message = ServiceMessage(xpc: object) else { return }
         switch message {
-        case let .welcome(_, device):
+        case let .welcome(_, device, swipeLifecycle):
             welcomed = true
             isConnecting = false
             self.device = device
+            receivesSwipeLifecycle = swipeLifecycle
             setAvailable(true)
             onDevice?(device)
         case .refused:
@@ -190,6 +197,10 @@ import XPC
             onButton?(cid, pressed, time)
         case let .thumbWheel(delta, touching, phase, time):
             onThumbWheel?(delta, touching, phase, time)
+        case let .swipe(phase, time):
+            guard receivesSwipeLifecycle else { return }
+            swipeInProgress = phase == .began
+            onSwipe?(phase, time)
         case let .wheel(highResolution, mode, byButton):
             wheel = (highResolution, mode)
             onWheel?(highResolution, mode, byButton)
@@ -199,9 +210,14 @@ import XPC
         }
     }
 
-    /// The service went away: every held control released, ownership gone.
+    /// The service went away: finish the swipe, release held controls, and clear ownership.
     private func lost() {
         let now = ProcessInfo.processInfo.systemUptime
+        receivesSwipeLifecycle = false
+        if swipeInProgress {
+            swipeInProgress = false
+            onSwipe?(.cancelled, now)
+        }
         for cid in held.sorted() { onButton?(cid, false, now) }
         held = []
         if isOwner {

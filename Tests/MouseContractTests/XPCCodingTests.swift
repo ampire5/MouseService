@@ -14,6 +14,7 @@ private let wish = WheelWish(window: 7, rects: [CGRect(x: 1, y: 2, width: 3, hei
 @Test func roundTripsEveryMessage() {
     let clients: [ClientMessage] = [
         .hello(version: ContractVersion(major: 1, minor: 3), bundleID: "local.framescrub"),
+        .hello(version: .current, bundleID: "test.swipe", swipeLifecycle: true),
         .want(Want(divert: [0xC3, 0x53], watch: [0x56], thumbWheel: true, wheel: [wish])),
         .want(Want(divert: [], watch: [], thumbWheel: false,
                    wheel: [WheelWish(window: 9, rects: nil, highResolution: nil, mode: nil)])),
@@ -25,11 +26,15 @@ private let wish = WheelWish(window: 7, rects: [CGRect(x: 1, y: 2, width: 3, hei
     let services: [ServiceMessage] = [
         .welcome(serviceVersion: "0.2", device: device),
         .welcome(serviceVersion: "0.2", device: .absent),
+        .welcome(serviceVersion: "0.3", device: .absent, swipeLifecycle: true),
         .refused(reason: "no"),
         .owner(true), .owner(false),
         .watching([0x53, 0x56]), .watching([]),
         .button(cid: 0xC3, pressed: true, time: 12.5),
         .thumbWheel(delta: -3, touching: true, phase: .changed, time: 1),
+        .swipe(phase: .began, time: 12),
+        .swipe(phase: .ended, time: 13),
+        .swipe(phase: .cancelled, time: 14),
         .wheel(highResolution: true, mode: .ratchet, byButton: true),
         .wheel(highResolution: false, mode: nil, byButton: false),
         .device(DeviceInfo(present: true, controls: [], thumbWheelStepsPerRevolution: nil, haptics: false)),
@@ -52,6 +57,14 @@ private let wish = WheelWish(window: 7, rects: [CGRect(x: 1, y: 2, width: 3, hei
     #expect(ServiceMessage(xpc: xpc_dictionary_create_empty()) == nil)
 }
 
+@Test func swipeRejectsUnknownPhase() {
+    let swipe = xpc_dictionary_create_empty()
+    xpc_dictionary_set_string(swipe, "type", "swipe")
+    xpc_dictionary_set_double(swipe, "time", 10)
+    xpc_dictionary_set_string(swipe, "phase", "changed")
+    #expect(ServiceMessage(xpc: swipe) == nil)
+}
+
 @Test func missingRequiredFieldIsNil() {
     let button = xpc_dictionary_create_empty()
     xpc_dictionary_set_string(button, "type", "button")
@@ -66,5 +79,5 @@ private let wish = WheelWish(window: 7, rects: [CGRect(x: 1, y: 2, width: 3, hei
     #expect(v11 < ContractVersion(major: 2, minor: 0))
     #expect(ContractVersion("1.2") == ContractVersion(major: 1, minor: 2))
     #expect(ContractVersion("x") == nil)
-    #expect(ContractVersion.current.text == "1.0")
+    #expect(ContractVersion.current.text == "1.1")
 }

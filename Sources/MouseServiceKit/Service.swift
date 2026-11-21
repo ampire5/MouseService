@@ -12,6 +12,7 @@ import XPC
         let connection: xpc_connection_t
         var id: ClientID?
         var bundleID = ""
+        var swipeLifecycle = false
         init(_ connection: xpc_connection_t) { self.connection = connection }
     }
 
@@ -23,11 +24,17 @@ import XPC
     private var newcomers: [ObjectIdentifier: Peer] = [:]
     private var nextID = 1
     private var followed = false
+    private var frontmostPID: pid_t?
+    /// The peer that received the current swipe's beginning.
+    private var swipeRecipient: ClientID?
     /// Messages handled from clients: tests wait on it to know a message got through.
     private(set) var messagesHandled = 0
 
     /// Called when following the pointer starts or stops being needed (`Arbiter.followsPointer`).
     public var onFollowsPointerChange: ((Bool) -> Void)?
+
+    /// Authenticated process IDs of the connected clients, updated on connect and disconnect.
+    public var onClientPIDsChange: ((Set<pid_t>) -> Void)?
 
     /// Called when the user's SmartShift press set the global wheel mode: the app saves it.
     public var onGlobalModeChange: ((WheelMode) -> Void)?
@@ -65,12 +72,34 @@ import XPC
         xpc_connection_resume(connection)
     }
 
-    public func frontmost(pid: pid_t?) { run(arbiter.frontmost(pid: pid)) }
+    public func frontmost(pid: pid_t?) {
+        frontmostPID = pid
+        run(arbiter.frontmost(pid: pid))
+    }
+
     public func pointer(_ place: PointerPlace?) { run(arbiter.pointer(place)) }
     public func releaseAll() { run(arbiter.releaseAll()) }
     /// The global wheel mode from the settings.
     public func setGlobalMode(_ mode: WheelMode) { run(arbiter.setGlobalMode(mode)) }
 
+    /// Routes a side-button swipe to a subscribed peer in the app focused at its beginning.
+    /// Pass the focus captured with the input event when available. Returns whether a peer was sent this phase.
+    @discardableResult public func swipe(_ phase: SwipePhase, time: Double, targetPID: pid_t? = nil) -> Bool {
+        switch phase {
+        case .began:
+            guard swipeRecipient == nil, let pid = targetPID ?? frontmostPID else { return false }
+            swipeRecipient = peers.lazy.filter { _, peer in
+                peer.swipeLifecycle && xpc_connection_get_pid(peer.connection) == pid
+            }.map(\.key).min()
+            guard let id = swipeRecipient else { return false }
+            send(.swipe(phase: phase, time: time), to: id)
+        case .ended, .cancelled:
+            guard let id = swipeRecipient else { return false }
+            swipeRecipient = nil
+            send(.swipe(phase: phase, time: time), to: id)
+        }
+        return true
+    }
     /// Cancels every peer: they see their connection end.
     public func cancelAll() {
         for peer in Array(peers.values) + Array(newcomers.values) { xpc_connection_cancel(peer.connection) }
@@ -84,14 +113,16 @@ import XPC
             newcomers[ObjectIdentifier(peer.connection)] = nil
             if let id = peer.id {
                 peers[id] = nil
+                if swipeRecipient == id { swipeRecipient = nil }
                 run(arbiter.disconnect(id))
+                reportClientPIDs()
             }
             return
         }
         guard let message = ClientMessage(xpc: object) else { return }
         messagesHandled += 1
         switch message {
-        case let .hello(clientVersion, bundleID):
+        case let .hello(clientVersion, bundleID, swipeLifecycle):
             guard peer.id == nil else { return }
             guard clientVersion.major <= ContractVersion.current.major else {
                 let reason = "contract \(clientVersion.text) not supported, service speaks \(ContractVersion.current.text)"
@@ -103,10 +134,12 @@ import XPC
             nextID += 1
             peer.id = id
             peer.bundleID = bundleID
+            peer.swipeLifecycle = swipeLifecycle && clientVersion >= .swipeLifecycle
             newcomers[ObjectIdentifier(peer.connection)] = nil
             peers[id] = peer
-            send(.welcome(serviceVersion: version, device: driver.device), to: id)
+            send(.welcome(serviceVersion: version, device: driver.device, swipeLifecycle: peer.swipeLifecycle), to: id)
             run(arbiter.connect(id, pid: xpc_connection_get_pid(peer.connection)))
+            reportClientPIDs()
         case let .want(want):
             guard let id = peer.id else { return }
             run(arbiter.want(id, want))
@@ -114,6 +147,10 @@ import XPC
             guard let id = peer.id else { return }
             run(arbiter.play(id, pattern: pattern, strength: strength))
         }
+    }
+
+    private func reportClientPIDs() {
+        onClientPIDsChange?(Set(peers.values.map { xpc_connection_get_pid($0.connection) }))
     }
 
     private func driverEvent(_ event: DriverEvent) {
