@@ -53,7 +53,15 @@ public struct SideButtonGesture: Sendable {
         self.settings = settings
     }
 
-    /// Whether a swipe is under way (the caller re-sends its end and keeps the pointer frozen).
+    /// Whether the back button is held and pointer movement can start or continue a swipe.
+    public var isTrackingMovement: Bool {
+        switch state {
+        case .pressed(.back, _, _), .swiping: true
+        default: false
+        }
+    }
+
+    /// Whether a swipe is under way and the pointer is frozen.
     public var isSwiping: Bool {
         if case .swiping = state { true } else { false }
     }

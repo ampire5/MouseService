@@ -5,8 +5,8 @@ import os
 
 /// Takes the side buttons (back: CG button 3, forward: 4) from the system and turns them into trackpad gestures
 /// (`SideButtonGesture`, `TouchSynth`). Its own thread and run loop at `.userInteractive`: the tap is input, and a busy
-/// main thread must not delay it or get it switched off by the system. Every other event passes untouched, and with
-/// the tap off the buttons are the system's again.
+/// main thread must not delay it or get it switched off by the system. Ordinary movement passes through until a
+/// swipe begins, and with the tap off the buttons are the system's again.
 final class SideButtonTap: @unchecked Sendable {
     private let synth: TouchSynth
     private var gesture = SideButtonGesture()
@@ -16,6 +16,10 @@ final class SideButtonTap: @unchecked Sendable {
     /// Repeats of a swipe's end (`TouchSynth`).
     private let repeats = DispatchQueue(label: "local.mouseservice.repeats", qos: .userInteractive)
     private static let log = Logger(subsystem: "local.mouseservice", category: "Tap")
+    static let eventMask = CGEventMask(1 << CGEventType.otherMouseDown.rawValue)
+        | CGEventMask(1 << CGEventType.otherMouseUp.rawValue)
+        | CGEventMask(1 << CGEventType.otherMouseDragged.rawValue)
+        | CGEventMask(1 << CGEventType.mouseMoved.rawValue)
 
     init(synth: TouchSynth) {
         self.synth = synth
@@ -25,12 +29,9 @@ final class SideButtonTap: @unchecked Sendable {
     func start() -> Bool {
         let ready = DispatchSemaphore(value: 0)
         let thread = Thread { [self] in
-            let mask = CGEventMask(1 << CGEventType.otherMouseDown.rawValue)
-                | CGEventMask(1 << CGEventType.otherMouseUp.rawValue)
-                | CGEventMask(1 << CGEventType.otherMouseDragged.rawValue)
             let me = Unmanaged.passUnretained(self).toOpaque()
             guard let tap = CGEvent.tapCreate(tap: .cgSessionEventTap, place: .headInsertEventTap, options: .defaultTap,
-                                              eventsOfInterest: mask, callback: { _, type, event, info in
+                                              eventsOfInterest: Self.eventMask, callback: { _, type, event, info in
                 let tap = Unmanaged<SideButtonTap>.fromOpaque(info!).takeUnretainedValue()
                 return tap.handle(type, event)
             }, userInfo: me) else {
@@ -70,35 +71,43 @@ final class SideButtonTap: @unchecked Sendable {
     // MARK: On the tap's thread
 
     private func handle(_ type: CGEventType, _ event: CGEvent) -> Unmanaged<CGEvent>? {
-        switch type {
-        case .tapDisabledByTimeout, .tapDisabledByUserInput:
+        if type == .tapDisabledByTimeout || type == .tapDisabledByUserInput {
             // The system switched the tap off (it was too slow once): a swipe must not stay half done.
             Self.log.notice("Tap disabled by the system (\(type.rawValue)); enabled again")
             apply(gesture.cancel())
             if let tap { CGEvent.tapEnable(tap: tap, enable: true) }
             return Unmanaged.passUnretained(event)
-        case .otherMouseDown, .otherMouseUp, .otherMouseDragged:
-            break
-        default:
+        }
+        guard let outputs = Self.route(type, event, at: ProcessInfo.processInfo.systemUptime, gesture: &gesture) else {
             return Unmanaged.passUnretained(event)
         }
-        let button: SideButtonGesture.Button
-        switch event.getIntegerValueField(.mouseEventButtonNumber) {
-        case 3: button = .back
-        case 4: button = .forward
-        default: return Unmanaged.passUnretained(event)
-        }
-        let now = ProcessInfo.processInfo.systemUptime
+        apply(outputs)
+        return nil
+    }
+
+    /// Nil passes the event through. An empty list consumes it without posting a gesture.
+    static func route(_ type: CGEventType, _ event: CGEvent, at now: @autoclosure () -> Double,
+                      gesture: inout SideButtonGesture) -> [SideButtonGesture.Output]? {
         switch type {
-        case .otherMouseDown:
-            apply(gesture.press(button, at: now))
-        case .otherMouseUp:
-            apply(gesture.release(button, at: now))
+        case .mouseMoved:
+            // Some mice deliver motion without a button number even while Back is held.
+            guard gesture.isTrackingMovement else { return nil }
+        case .otherMouseDown, .otherMouseUp, .otherMouseDragged:
+            let button: SideButtonGesture.Button
+            switch event.getIntegerValueField(.mouseEventButtonNumber) {
+            case 3: button = .back
+            case 4: button = .forward
+            default: return nil
+            }
+            if type == .otherMouseDown { return gesture.press(button, at: now()) }
+            if type == .otherMouseUp { return gesture.release(button, at: now()) }
         default:
-            apply(gesture.drag(dx: event.getDoubleValueField(.mouseEventDeltaX),
-                               dy: event.getDoubleValueField(.mouseEventDeltaY)))
+            return nil
         }
-        return nil   // both buttons are ours: the system never sees their press without its release
+
+        let outputs = gesture.drag(dx: event.getDoubleValueField(.mouseEventDeltaX),
+                                   dy: event.getDoubleValueField(.mouseEventDeltaY))
+        return type == .mouseMoved && !gesture.isSwiping ? nil : outputs
     }
 
     private func apply(_ outputs: [SideButtonGesture.Output]) {
