@@ -140,6 +140,9 @@ over XPC, so a client can ignore the legacy `local.mouseservice.swipeBegan` noti
 
 ### Ulanzi D100H
 
+See the [D100H integration and troubleshooting guide](docs/ulanzi-d100h.md) for the FrameScrub controls,
+the sleep and reconnect checks, and the boundary between HID capture and Bluetooth setup.
+
 `MouseClient.setD100HDetentsMuted(true)` temporarily disables the dial's physical detents while the client
 is in front. Pass `false` when the player window loses focus within the app or when mute is no longer wanted.
 MouseService also releases the override when the client leaves the foreground or disconnects. It records the
