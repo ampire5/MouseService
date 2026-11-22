@@ -3,6 +3,7 @@ import MouseClient
 import MouseContract
 
 // mouse-client-probe divert 0xC3,0xC4 [--watch 0x53,0x56] [--thumb] [--wheel freeSpin|ratchet] [--hires]
+//                    [--d100h-input] [--mute-d100h-detents]
 //
 // A regular app with one window, so it can be frontmost: it asks MouseService for the controls given and prints
 // every event with its latency (now - the service's time of the mouse's report, in ms). `--wheel` and `--hires`
@@ -18,6 +19,8 @@ var watch: Set<UInt16> = []
 var thumb = false
 var mode: WheelMode?
 var hires = false
+var muteD100HDetents = false
+var requestD100HInput = false
 var latencyCount = 0
 while !args.isEmpty {
     let a = args.removeFirst()
@@ -27,6 +30,8 @@ while !args.isEmpty {
     case "--thumb": thumb = true
     case "--wheel": mode = args.isEmpty ? nil : (args.removeFirst() == "ratchet" ? .ratchet : .freeSpin)
     case "--hires": hires = true
+    case "--mute-d100h-detents": muteD100HDetents = true
+    case "--d100h-input": requestD100HInput = true
     case "--latency": latencyCount = args.isEmpty ? 0 : Int(args.removeFirst()) ?? 0
     default:
         FileHandle.standardError.write(Data("unknown argument \(a)\n".utf8))
@@ -56,6 +61,10 @@ setvbuf(stdout, nil, _IOLBF, 0)
         client.onThumbWheel = { delta, touching, phase, time in
             print("thumb \(delta) touching \(touching) \(phase) \(ms(time))")
         }
+        if requestD100HInput {
+            client.onD100HInput = { input, time in print("d100h \(input) \(ms(time))") }
+            client.setD100HInputRequested(true)
+        }
         client.onButton = { [weak self] cid, pressed, time in
             print(String(format: "button 0x%02X %@ ", cid, pressed ? "down" : "up") + ms(time))
             guard let self, pressed, latencyCount > 0 else { return }
@@ -67,6 +76,7 @@ setvbuf(stdout, nil, _IOLBF, 0)
                 latencies = []
             }
         }
+        client.setD100HDetentsMuted(muteD100HDetents)
         client.start()
         var wishes: [WheelWish] = []
         if mode != nil || hires {

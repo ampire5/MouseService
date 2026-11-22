@@ -35,9 +35,11 @@ let package = Package(
         ]),
         // A test client: takes buttons, declares wheel areas, prints events with their latency (docs/bench.md).
         .executableTarget(name: "mouse-client-probe", dependencies: ["MouseClient", "MouseContract"]),
+        .executableTarget(name: "d100h-hid", dependencies: ["MouseClient", "MouseContract"]),
         .testTarget(name: "GestureCoreTests", dependencies: ["GestureCore"]),
         .testTarget(name: "PointerCoreTests", dependencies: ["PointerCore"], resources: [.copy("Fixtures")]),
         .testTarget(name: "MouseServiceTests", dependencies: ["MouseService", "PointerCore"]),
+        .testTarget(name: "D100HHIDTests", dependencies: ["d100h-hid", "MouseContract"]),
         .testTarget(name: "MouseContractTests", dependencies: ["MouseContract"]),
         .testTarget(name: "MouseCoreTests", dependencies: ["MouseCore", "MouseContract"]),
         .testTarget(name: "MouseServiceKitTests", dependencies: ["MouseServiceKit", "MouseClient", "MouseCore",

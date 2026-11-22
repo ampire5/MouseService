@@ -5,6 +5,7 @@ import MouseContract
 import MouseCore
 import MouseServiceKit
 import os
+import Security
 import ServiceManagement
 import SettingsKit
 
@@ -29,6 +30,13 @@ import SettingsKit
     private var scrollTap: ScrollTap?
     private var driver: LogiMouseDriver?
     private var service: Service?
+    private let d100hSettings = D100HSettings()
+    private var d100hDaemonStatus: SMAppService.Status?
+    private var d100hStatusTask: Task<Void, Never>?
+    private static let screenUnlocked = Notification.Name("com.apple.screenIsUnlocked")
+    private var d100hWorkspaceState = D100HWorkspaceState()
+    private var d100hUnlockTask: Task<Void, Never>?
+    private var d100hWorkspaceObservers: [NSObjectProtocol] = []
     private var listener: Listener?
     private var pointerTracker: PointerTracker?
     private var frontmostTracker: FrontmostTracker?
@@ -81,9 +89,32 @@ import SettingsKit
         pointer.start()
         updateTap()
         startService()
+        let workspace = NSWorkspace.shared.notificationCenter
+        for name in [NSWorkspace.willSleepNotification, NSWorkspace.didWakeNotification,
+                     NSWorkspace.sessionDidResignActiveNotification, NSWorkspace.sessionDidBecomeActiveNotification] {
+            let observer = workspace.addObserver(forName: name, object: nil, queue: .main) { [weak self] _ in
+                MainActor.assumeIsolated { self?.d100hWorkspaceChanged(name) }
+            }
+            d100hWorkspaceObservers.append(observer)
+        }
+        DistributedNotificationCenter.default().addObserver(self, selector: #selector(d100hScreenChanged(_:)),
+                                                             name: Self.screenUnlocked, object: nil,
+                                                             suspensionBehavior: .deliverImmediately)
+    }
+
+    func applicationShouldTerminate(_ sender: NSApplication) -> NSApplication.TerminateReply {
+        guard let service else { return .terminateNow }
+        service.stopD100HInput()
+        d100hSettings.stop {
+            DispatchQueue.main.async { NSApp.reply(toApplicationShouldTerminate: true) }
+        }
+        return .terminateLater
     }
 
     func applicationWillTerminate(_ notification: Notification) {
+        d100hUnlockTask?.cancel()
+        for observer in d100hWorkspaceObservers { NSWorkspace.shared.notificationCenter.removeObserver(observer) }
+        DistributedNotificationCenter.default().removeObserver(self)
         tap?.stop()
         scrollTap?.stop()
         pointer.stop()
@@ -93,6 +124,51 @@ import SettingsKit
 
     func applicationDidBecomeActive(_ notification: Notification) {
         if settingsWindow?.window?.isVisible == true { deviceSettings.refreshAccessibility() }
+        refreshD100HDaemon()
+    }
+
+    @objc private func d100hScreenChanged(_ notification: Notification) {
+        if let user = notification.object as? String, let uid = uid_t(user), uid != getuid() { return }
+        d100hWorkspaceChanged(notification.name)
+    }
+
+    private func d100hWorkspaceChanged(_ name: Notification.Name) {
+        let event: D100HWorkspaceState.Event
+        switch name {
+        case NSWorkspace.willSleepNotification: event = .sleep
+        case NSWorkspace.didWakeNotification: event = .wake
+        case NSWorkspace.sessionDidResignActiveNotification: event = .sessionInactive
+        case NSWorkspace.sessionDidBecomeActiveNotification: event = .sessionActive
+        case Self.screenUnlocked: event = .screenUnlocked
+        default: return
+        }
+        d100hWorkspaceState.handle(event)
+        if name == Self.screenUnlocked {
+            d100hUnlockTask?.cancel()
+            d100hUnlockTask = Task { [weak self] in
+                // loginwindow announces unlock before finishing its UI teardown (250 ms in the sleep trace).
+                do { try await Task.sleep(for: .milliseconds(300)) }
+                catch { return }
+                self?.d100hUnlockTask = nil
+                self?.reconcileD100HWorkspace()
+            }
+        } else {
+            if !d100hWorkspaceState.isActive {
+                d100hUnlockTask?.cancel()
+                d100hUnlockTask = nil
+            }
+            reconcileD100HWorkspace()
+        }
+    }
+
+    private func reconcileD100HWorkspace() {
+        let active = d100hWorkspaceState.isActive
+        guard !active || d100hUnlockTask == nil else { return }
+        if active {
+            service?.frontmost(pid: NSWorkspace.shared.frontmostApplication?.processIdentifier)
+            refreshD100HDaemon()
+        }
+        service?.setD100HSessionActive(active)
     }
 
     // MARK: Service
@@ -102,6 +178,13 @@ import SettingsKit
         driver.onBatteryChange = { [weak self] in self?.updateMouseStatus() }
         let version = Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? "?"
         let service = Service(driver: driver, version: version, globalMode: settings.wheelMode)
+        service.onD100HDetentsMutedChange = { [d100hSettings] muted in d100hSettings.setMuted(muted) }
+        service.configureD100HTurns = { [d100hSettings] enabled, completion in
+            d100hSettings.setTurnMapping(enabled) { success in
+                DispatchQueue.main.async { completion(success) }
+            }
+        }
+        d100hSettings.recover()
         // A SmartShift press where no app asks for a mode is the user's choice: kept as the setting.
         service.onGlobalModeChange = { [weak self] mode in
             try? self?.settings.setValue(mode == .freeSpin ? "free-spin" : "ratchet", forKey: ServiceSettings.wheelModeKey)
@@ -111,10 +194,11 @@ import SettingsKit
         service.onClientPIDsChange = { [clickTargets] pids in
             clickTargets.withLock { $0.clients = pids }
         }
-        frontmostTracker = FrontmostTracker { [clickTargets, weak service, weak tracker] pid in
+        frontmostTracker = FrontmostTracker { [clickTargets, weak service, weak tracker, weak self] pid in
             clickTargets.withLock { $0.frontmost = pid }
             service?.frontmost(pid: pid)
             tracker?.invalidate()
+            if self?.d100hDaemonStatus == .requiresApproval { self?.refreshD100HDaemon() }
         }
         settings.onChange = { [weak self, weak driver, weak service] in
             guard let self, let driver else { return }
@@ -130,6 +214,7 @@ import SettingsKit
         self.driver = driver
         self.service = service
         pointerTracker = tracker
+        refreshD100HDaemon()
     }
 
     /// Opened by hand: the agent is the app that runs. This copy writes the agent's plist into
@@ -228,6 +313,7 @@ import SettingsKit
     }
 
     func menuNeedsUpdate(_ menu: NSMenu) {
+        refreshD100HDaemon()
         menu.removeAllItems()
         let settingsItem = item("Settings…", #selector(openSettings))
         settingsItem.keyEquivalent = ","
@@ -251,6 +337,18 @@ import SettingsKit
         }
         menu.addItem(.separator())
         menu.addItem(item("Release All Mouse Buttons", #selector(releaseAll)))
+        if let d100hDaemonStatus {
+            let dialItem: NSMenuItem
+            switch d100hDaemonStatus {
+            case .enabled:
+                dialItem = NSMenuItem(title: "D100H Auto-Start Enabled", action: nil, keyEquivalent: "")
+            case .requiresApproval:
+                dialItem = item("Approve D100H Auto-Start…", #selector(enableD100HDaemon))
+            default:
+                dialItem = item("Enable D100H Auto-Start…", #selector(enableD100HDaemon))
+            }
+            menu.addItem(dialItem)
+        }
         menu.addItem(advancedMenuItem())
         menu.addItem(.separator())
         menu.addItem(NSMenuItem(title: "Quit MouseService", action: #selector(NSApplication.terminate(_:)),
@@ -298,6 +396,59 @@ import SettingsKit
     }
 
     @objc private func releaseAll() { service?.releaseAll() }
+
+    private func refreshD100HDaemon() {
+        guard d100hStatusTask == nil else { return }
+        d100hStatusTask = Task { [weak self] in
+            let status = await Self.d100hRegistration()
+            guard let self, !Task.isCancelled else { return }
+            d100hStatusTask = nil
+            d100hDaemonStatus = status
+            service?.allowD100HDaemon(status == .enabled)
+        }
+    }
+
+    @objc private func enableD100HDaemon() {
+        d100hStatusTask?.cancel()
+        d100hStatusTask = Task { [weak self] in
+            let (status, error) = await Self.registerD100H()
+            guard let self else { return }
+            d100hStatusTask = nil
+            d100hDaemonStatus = status
+            service?.allowD100HDaemon(status == .enabled)
+            if status == .requiresApproval {
+                SMAppService.openSystemSettingsLoginItems()
+            } else if let error {
+                let alert = NSAlert()
+                alert.messageText = "Could not enable D100H auto-start"
+                alert.informativeText = error
+                alert.runModal()
+            }
+        }
+    }
+
+    @concurrent private static func d100hRegistration() async -> SMAppService.Status? {
+        var code: SecCode?
+        var executable: SecStaticCode?
+        var info: CFDictionary?
+        guard SecCodeCopySelf([], &code) == errSecSuccess, let code,
+              SecCodeCopyStaticCode(code, [], &executable) == errSecSuccess, let executable,
+              SecCodeCopySigningInformation(executable, SecCSFlags(rawValue: kSecCSSigningInformation),
+                                            &info) == errSecSuccess,
+              let certificates = (info as? [String: Any])?[kSecCodeInfoCertificates as String] as? [SecCertificate],
+              !certificates.isEmpty else { return nil }
+        return SMAppService.daemon(plistName: "local.mouseservice.d100h.plist").status
+    }
+
+    @concurrent private static func registerD100H() async -> (SMAppService.Status, String?) {
+        let service = SMAppService.daemon(plistName: "local.mouseservice.d100h.plist")
+        do {
+            if service.status != .enabled && service.status != .requiresApproval { try service.register() }
+            return (service.status, nil)
+        } catch {
+            return (service.status, error.localizedDescription)
+        }
+    }
 
     @objc private func toggleGestures() {
         try? settings.setValue(gesturesOn ? "no" : "yes", forKey: ServiceSettings.gesturesKey)

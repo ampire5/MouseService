@@ -1,0 +1,20 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <key>Label</key>
+    <string>local.mouseservice.d100h</string>
+    <key>BundleProgram</key>
+    <string>Contents/Helpers/d100h-hid</string>
+    <key>ProgramArguments</key>
+    <array>
+        <string>d100h-hid</string>
+        <string>--daemon</string>
+    </array>
+    <key>MachServices</key>
+    <dict>
+        <key>local.mouseservice.d100h</key>
+        <true/>
+    </dict>
+</dict>
+</plist>

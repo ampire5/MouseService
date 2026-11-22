@@ -14,5 +14,7 @@
     <!-- The menu bar only. -->
     <key>LSUIElement</key><true/>
     <key>NSPrincipalClass</key><string>NSApplication</string>
+    <key>NSBluetoothAlwaysUsageDescription</key>
+    <string>MouseService uses Bluetooth to manage the Ulanzi D100H detents when an app requests it.</string>
 </dict>
 </plist>

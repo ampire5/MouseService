@@ -40,6 +40,152 @@ import MouseCore
 private let gesture: UInt16 = 0xC3
 
 @MainActor @Suite(.serialized) struct ServiceTests {
+    @Test func dialReaderRejectsUnprivilegedPeers() async {
+        guard geteuid() != 0 else { return }
+        let rig = Rig()
+        defer { rig.shutDown() }
+        let connection = xpc_connection_create_from_endpoint(rig.listener.endpoint)
+        xpc_connection_set_target_queue(connection, .main)
+        var refused = false
+        xpc_connection_set_event_handler(connection) { object in
+            if case .refused = ServiceMessage(xpc: object) {
+                MainActor.assumeIsolated { refused = true }
+            }
+        }
+        xpc_connection_resume(connection)
+        defer { xpc_connection_cancel(connection) }
+        xpc_connection_send_message(connection, D100HHelperMessage.hello.xpc())
+        await eventually("reject the unprivileged reader") { refused }
+    }
+
+    @Test func dialEventsFollowTheSubscribedForegroundClient() async {
+        let rig = Rig()
+        defer { rig.shutDown() }
+        let first = MouseClient(bundleID: "test.player", endpointProvider: { rig.listener.endpoint })
+        let second = MouseClient(bundleID: "test.observer", endpointProvider: { rig.listener.endpoint })
+        var firstEvents: [D100HInput] = []
+        var secondEvents: [D100HInput] = []
+        first.onD100HInput = { event, _ in firstEvents.append(event) }
+        second.onD100HInput = { event, _ in secondEvents.append(event) }
+        first.setD100HInputRequested(true)
+        first.start()
+        second.start()
+        await eventually("input request") { rig.service.messagesHandled == 3 }
+
+        let press = D100HInput.button(.topLeft, pressed: true)
+        rig.service.d100hInput(press, time: 1)
+        rig.service.frontmost(pid: getpid())
+        rig.service.d100hInput(press, time: 2)
+        rig.service.frontmost(pid: nil)
+        rig.service.d100hInput(.button(.topLeft, pressed: false), time: 3)
+        await eventually("cancel on focus loss") { firstEvents.count == 2 }
+        #expect(firstEvents == [press, .cancelled])
+        #expect(secondEvents.isEmpty)
+
+        rig.service.frontmost(pid: getpid())
+        first.stop()
+        await eventually("drop the input recipient when the client disconnects") {
+            rig.service.clients.map(\.bundleID) == ["test.observer"]
+        }
+    }
+
+    @Test func dialMuteFollowsFocusAndDisconnectIndependentlyOfMouseOwnership() async {
+        let rig = Rig()
+        defer { rig.shutDown() }
+        rig.service.configureD100HTurns = { _, finish in finish(true) }
+        let client = MouseClient(bundleID: "test.dial", endpointProvider: { rig.listener.endpoint })
+        var states: [Bool] = []
+        rig.service.onD100HDetentsMutedChange = { states.append($0) }
+        client.setD100HDetentsMuted(true)
+        client.start()
+        await eventually("detent request") { rig.service.messagesHandled >= 2 }
+        #expect(states.isEmpty)
+
+        rig.service.frontmost(pid: getpid())
+        #expect(states == [true])
+        #expect(rig.driver.applied.last == MouseState(mode: .ratchet))
+        rig.service.frontmost(pid: nil)
+        #expect(states == [true, false])
+        rig.service.frontmost(pid: getpid())
+        #expect(states == [true, false, true])
+        client.setD100HDetentsMuted(false)
+        await eventually("explicit detent release") { states == [true, false, true, false] }
+        client.setD100HDetentsMuted(true)
+        await eventually("new detent request") { states == [true, false, true, false, true] }
+        client.stop()
+        await eventually("detent release on disconnect") { states == [true, false, true, false, true, false] }
+    }
+
+    @Test func dialCancelsOnSleepAndResumesOnlyForTheActiveSession() async {
+        let rig = Rig()
+        defer { rig.shutDown() }
+        let client = MouseClient(bundleID: "test.player", endpointProvider: { rig.listener.endpoint })
+        var input: [D100HInput] = []
+        var muted: [Bool] = []
+        rig.service.onD100HDetentsMutedChange = { muted.append($0) }
+        client.onD100HInput = { event, _ in input.append(event) }
+        client.setD100HInputRequested(true)
+        client.setD100HDetentsMuted(true)
+        client.start()
+        await eventually("D100H requests") { rig.service.messagesHandled == 3 }
+        rig.service.frontmost(pid: getpid())
+        rig.service.setD100HSessionActive(false)
+        rig.service.frontmost(pid: getpid())
+        let turn = D100HInput.turn(.right, knobPressed: false)
+        rig.service.d100hInput(turn, time: 1)
+        rig.service.setD100HSessionActive(true)
+        rig.service.d100hInput(turn, time: 2)
+        await eventually("sleep cancellation and first resumed gesture") { input.count == 2 }
+        #expect(input == [.cancelled, turn])
+        #expect(muted == [true, false, true])
+    }
+
+    @Test func dialWakeRetriesDaemonWhenThePlayerAlreadyHasFocus() async {
+        let rig = Rig()
+        defer { rig.shutDown() }
+        let unavailableDaemon = Listener(anonymous: rig.service)
+        let endpoint = unavailableDaemon.endpoint
+        unavailableDaemon.cancel()
+        let client = MouseClient(bundleID: "test.player", endpointProvider: { rig.listener.endpoint })
+        defer { client.stop() }
+        var connections = 0
+        rig.service.makeD100HDaemonConnection = {
+            connections += 1
+            return xpc_connection_create_from_endpoint(endpoint)
+        }
+        rig.service.configureD100HTurns = { _, complete in complete(true) }
+        rig.service.allowD100HDaemon(true)
+        client.setD100HInputRequested(true)
+        client.start()
+        await eventually("D100H request") { rig.service.messagesHandled == 2 }
+        rig.service.frontmost(pid: getpid())
+
+        // Unlock resumes the client before the system daemon can serve it.
+        await eventually("first connection rejected") { rig.service.d100hDaemonRetry != nil }
+        #expect(connections == 1)
+        rig.service.setD100HSessionActive(true)
+        #expect(connections == 2)
+    }
+
+    @Test func managedDialDefersMutingUntilItsViewingProfileIsReady() async {
+        let rig = Rig()
+        defer { rig.shutDown() }
+        rig.service.configureD100HTurns = { _, finish in finish(true) }
+        var muted: [Bool] = []
+        rig.service.onD100HDetentsMutedChange = { muted.append($0) }
+        let client = MouseClient(bundleID: "test.player", endpointProvider: { rig.listener.endpoint })
+        defer { client.stop() }
+        client.setD100HInputRequested(true)
+        client.setD100HDetentsMuted(true)
+        client.start()
+        await eventually("D100H requests") { rig.service.messagesHandled == 3 }
+        rig.service.frontmost(pid: getpid())
+        rig.service.setD100HSessionActive(false)
+        rig.service.setD100HSessionActive(true)
+
+        #expect(muted.isEmpty)
+    }
+
     @Test func helloGetsWelcomeAndDevice() async {
         let rig = Rig()
         let client = MouseClient(bundleID: "test.a", endpointProvider: { rig.listener.endpoint })
@@ -142,7 +288,7 @@ private let gesture: UInt16 = 0xC3
         xpc_connection_send_message(connection,
                                     ClientMessage.hello(version: ContractVersion(major: 2, minor: 0), bundleID: "x").xpc())
         await eventually("refusal") { heard.invalid }
-        #expect(heard.replies == [.refused(reason: "contract 2.0 not supported, service speaks 1.1")])
+        #expect(heard.replies == [.refused(reason: "contract 2.0 not supported, service speaks \(ContractVersion.current.text)")])
         #expect(rig.service.clients.isEmpty)
         rig.shutDown()
     }

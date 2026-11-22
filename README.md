@@ -138,6 +138,48 @@ mouse.start()
 Set `onSwipe` before connecting. `receivesSwipeLifecycle` indicates that the service agreed to deliver swipe phases
 over XPC, so a client can ignore the legacy `local.mouseservice.swipeBegan` notification while it is connected.
 
+### Ulanzi D100H
+
+`MouseClient.setD100HDetentsMuted(true)` temporarily disables the dial's physical detents while the client
+is in front. Pass `false` when the player window loses focus within the app or when mute is no longer wanted.
+MouseService also releases the override when the client leaves the foreground or disconnects. It records the
+exact previous setting before writing, checks the device's reply, and retries recovery on reconnect if the
+process or device disappeared during the override. This request acts independently of Logitech ownership.
+
+To exercise the request with an updated MouseService agent, run `swift run mouse-client-probe --mute-d100h-detents`.
+The probe window requests quiet while focused. Switch to another app or close the window to restore the dial's
+setting. macOS may ask for Bluetooth permission for MouseService.
+
+In a build signed with a certificate, choose **Enable D100H Auto-Start…** from the MouseService
+menu and approve the background item in System Settings. If the manual reader is already running,
+leave the player and stop that reader in its Terminal window. The per-user agent starts the
+system daemon on demand. The daemon accepts requests only from MouseService signed by the
+same certificate and running as the active console user. It releases the dial when that agent
+goes away.
+
+Give the installed reader Input Monitoring permission in **System Settings → Privacy & Security →
+Input Monitoring**. Add `~/Applications/MouseService.app/Contents/Helpers/d100h-hid` to the list.
+If the daemon was already running when you granted access, restart it once with
+`sudo launchctl kickstart -k system/local.mouseservice.d100h`. The reader never opens other devices.
+
+For an ad hoc build or while system approval is pending, start the bundled reader in the same
+login session as MouseService:
+
+```sh
+sudo ~/Applications/MouseService.app/Contents/Helpers/d100h-hid --service
+```
+
+The reader captures just the D100H when a foreground client requests input. After exclusive capture,
+MouseService saves both pressed-turn assignments and verifies the two replacements before forwarding input.
+Leaving the profile cancels held gestures immediately. MouseService then restores and verifies the saved
+assignments before telling the reader to release the device. If verification times out, MouseService
+releases the capture and retains the original values in its recovery file for the next connection.
+The reader needs administrator privileges because macOS requires them to seize this HID device.
+Bluetooth permission belongs to MouseService. The manual reader has to be restarted if the agent exits.
+
+To see the delivered events with a local build, keep the managed reader running and focus
+`swift run mouse-client-probe --d100h-input` in a separate terminal.
+
 ## Private interfaces
 
 Dock swipes use CoreGraphics event fields on macOS 26. On macOS 27, they use IOKit's `IOHIDEventCreate` and

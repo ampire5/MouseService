@@ -10,7 +10,14 @@ import XPC
 /// (not installed, refused or quit) the app has no Logitech features; the client tries again on the announcement or
 /// the app's next activation, never on a timer.
 @MainActor public final class MouseClient {
-    public static let serviceName = "local.mouseservice.xpc"
+    public static let serviceName: String = {
+        #if DEBUG
+        if ProcessInfo.processInfo.environment["MOUSE_SERVICE_TEST_ENDPOINT"] == "local.mouseservice.d100h-test.xpc" {
+            return "local.mouseservice.d100h-test.xpc"
+        }
+        #endif
+        return "local.mouseservice.xpc"
+    }()
     /// Posted by the service (distributed) once it listens: clients without one connect again.
     public static let serviceStarted = Notification.Name("local.mouseservice.started")
 
@@ -33,6 +40,7 @@ import XPC
     public var onThumbWheel: ((_ delta: Int, _ touching: Bool, _ phase: ThumbPhase, _ time: Double) -> Void)?
     /// Set before starting the client to receive swipe events on the main actor.
     public var onSwipe: ((_ phase: SwipePhase, _ time: Double) -> Void)?
+    public var onD100HInput: ((_ input: D100HInput, _ time: Double) -> Void)?
     public var onWheel: ((_ highResolution: Bool, _ mode: WheelMode?, _ byButton: Bool) -> Void)?
     public var onDevice: ((DeviceInfo) -> Void)?
     public var onAvailability: ((Bool) -> Void)?
@@ -46,6 +54,8 @@ import XPC
     private var welcomed = false
     private var wanted: Want?
     private var sent: Want?
+    private var d100hDetentsMuted = false
+    private var d100hInputRequested = false
     private var held: Set<UInt16> = []
     private var swipeInProgress = false
     private var activationObserver: NSObjectProtocol?
@@ -111,6 +121,22 @@ import XPC
         xpc_connection_send_message(connection, ClientMessage.play(pattern: pattern, strength: strength).xpc())
     }
 
+    /// Requests temporary silence from the dial. The current request is replayed after reconnect.
+    public func setD100HDetentsMuted(_ muted: Bool) {
+        guard d100hDetentsMuted != muted else { return }
+        d100hDetentsMuted = muted
+        guard let connection, isAvailable || isConnecting else { return }
+        xpc_connection_send_message(connection, ClientMessage.d100hDetentsMuted(muted).xpc())
+    }
+
+    /// Request dial input for the focused player. The request is replayed after reconnect.
+    public func setD100HInputRequested(_ requested: Bool) {
+        guard d100hInputRequested != requested else { return }
+        d100hInputRequested = requested
+        guard let connection, isAvailable || isConnecting else { return }
+        xpc_connection_send_message(connection, ClientMessage.d100hInputRequested(requested).xpc())
+    }
+
     // MARK: Private
 
     /// Without a welcomed service: a new connection, or a hello on the one kept after the service went away.
@@ -146,6 +172,12 @@ import XPC
         xpc_connection_send_message(connection, message.xpc())
         sent = nil
         if let wanted { want(wanted) }
+        if d100hInputRequested {
+            xpc_connection_send_message(connection, ClientMessage.d100hInputRequested(true).xpc())
+        }
+        if d100hDetentsMuted {
+            xpc_connection_send_message(connection, ClientMessage.d100hDetentsMuted(true).xpc())
+        }
     }
 
     private func received(_ object: xpc_object_t, on from: xpc_connection_t) {
@@ -201,6 +233,8 @@ import XPC
             guard receivesSwipeLifecycle else { return }
             swipeInProgress = phase == .began
             onSwipe?(phase, time)
+        case let .d100hInput(input, time):
+            if d100hInputRequested || input == .cancelled { onD100HInput?(input, time) }
         case let .wheel(highResolution, mode, byButton):
             wheel = (highResolution, mode)
             onWheel?(highResolution, mode, byButton)
@@ -213,6 +247,7 @@ import XPC
     /// The service went away: finish the swipe, release held controls, and clear ownership.
     private func lost() {
         let now = ProcessInfo.processInfo.systemUptime
+        if d100hInputRequested { onD100HInput?(.cancelled, now) }
         receivesSwipeLifecycle = false
         if swipeInProgress {
             swipeInProgress = false

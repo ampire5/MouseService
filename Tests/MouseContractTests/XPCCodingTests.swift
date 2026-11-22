@@ -21,6 +21,8 @@ private let wish = WheelWish(window: 7, rects: [CGRect(x: 1, y: 2, width: 3, hei
         .want(.none),
         .play(pattern: 5, strength: 80),
         .play(pattern: 0, strength: nil),
+        .d100hDetentsMuted(true), .d100hDetentsMuted(false),
+        .d100hInputRequested(true), .d100hInputRequested(false),
     ]
     for m in clients { #expect(ClientMessage(xpc: m.xpc()) == m) }
     let services: [ServiceMessage] = [
@@ -35,6 +37,9 @@ private let wish = WheelWish(window: 7, rects: [CGRect(x: 1, y: 2, width: 3, hei
         .swipe(phase: .began, time: 12),
         .swipe(phase: .ended, time: 13),
         .swipe(phase: .cancelled, time: 14),
+        .d100hInput(.button(.topMiddle, pressed: false), time: 20),
+        .d100hInput(.turn(.left, knobPressed: true), time: 21),
+        .d100hInput(.cancelled, time: 22),
         .wheel(highResolution: true, mode: .ratchet, byButton: true),
         .wheel(highResolution: false, mode: nil, byButton: false),
         .device(DeviceInfo(present: true, controls: [], thumbWheelStepsPerRevolution: nil, haptics: false)),
@@ -47,6 +52,17 @@ private let wish = WheelWish(window: 7, rects: [CGRect(x: 1, y: 2, width: 3, hei
     let object = ClientMessage.want(want).xpc()
     xpc_dictionary_set_int64(object, "future", 1)
     #expect(ClientMessage(xpc: object) == .want(want))
+}
+
+@Test func dialHelperUsesTheCaptureSessionOnEveryEvent() {
+    let messages: [D100HHelperMessage] = [
+        .connect, .hello, .managedHello, .recover, .suspend, .capture(45), .capture(nil),
+        .release(restored: true), .release(restored: false),
+        .captured(session: 45, open: true), .captured(session: 45, open: false),
+        .input(session: 45, event: .turn(.right, knobPressed: false), time: 1.5),
+        .input(session: 45, event: .cancelled, time: 1.6),
+    ]
+    for message in messages { #expect(D100HHelperMessage(xpc: message.xpc()) == message) }
 }
 
 @Test func unknownTypeIsNil() {
@@ -79,5 +95,5 @@ private let wish = WheelWish(window: 7, rects: [CGRect(x: 1, y: 2, width: 3, hei
     #expect(v11 < ContractVersion(major: 2, minor: 0))
     #expect(ContractVersion("1.2") == ContractVersion(major: 1, minor: 2))
     #expect(ContractVersion("x") == nil)
-    #expect(ContractVersion.current.text == "1.1")
+    #expect(ContractVersion.current.text == "1.3")
 }

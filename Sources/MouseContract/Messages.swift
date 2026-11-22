@@ -11,7 +11,7 @@ public struct ContractVersion: Comparable, Hashable, Sendable {
         self.minor = minor
     }
 
-    /// `"1.2"`; nil for anything else.
+    /// Parses a major and minor version separated by a dot.
     public init?(_ text: String) {
         let parts = text.split(separator: ".", omittingEmptySubsequences: false)
         guard parts.count == 2, let major = Int(parts[0]), let minor = Int(parts[1]) else { return nil }
@@ -19,7 +19,7 @@ public struct ContractVersion: Comparable, Hashable, Sendable {
     }
 
     public static let swipeLifecycle = ContractVersion(major: 1, minor: 1)
-    public static let current = swipeLifecycle
+    public static let current = ContractVersion(major: 1, minor: 3)
 
     public var text: String { "\(major).\(minor)" }
 
@@ -106,6 +106,22 @@ public enum SwipePhase: String, Sendable {
     case began, ended, cancelled
 }
 
+public enum D100HButton: String, Sendable {
+    case topLeft, topMiddle, topRight
+    case sideUpperLeft, sideUpperRight, bottomLeft, bottomRight
+}
+
+public enum D100HDirection: String, Sendable {
+    case left, right
+}
+
+public enum D100HInput: Equatable, Sendable {
+    case button(D100HButton, pressed: Bool)
+    case turn(D100HDirection, knobPressed: Bool)
+    /// Discard any gesture in progress without performing its release action.
+    case cancelled
+}
+
 /// Client → service.
 public enum ClientMessage: Equatable, Sendable {
     /// Request swipe events for this connection when the service supports them.
@@ -113,6 +129,10 @@ public enum ClientMessage: Equatable, Sendable {
     case want(Want)
     /// A haptic pattern (`LogiHIDPP.HapticPattern.rawValue`), at `strength` 0…100 once or the normal strength.
     case play(pattern: UInt8, strength: UInt8?)
+    /// Temporarily suppress the D100H detents while this client is in front.
+    case d100hDetentsMuted(Bool)
+    /// Request dial input while this client is in the foreground.
+    case d100hInputRequested(Bool)
 }
 
 /// Service → client. Times are `ProcessInfo.systemUptime`.
@@ -128,6 +148,7 @@ public enum ServiceMessage: Equatable, Sendable {
     case button(cid: UInt16, pressed: Bool, time: Double)
     case thumbWheel(delta: Int, touching: Bool, phase: ThumbPhase, time: Double)
     case swipe(phase: SwipePhase, time: Double)
+    case d100hInput(D100HInput, time: Double)
     /// The main wheel's state, to the client under the pointer; `byButton`: the user switched it with SmartShift.
     case wheel(highResolution: Bool, mode: WheelMode?, byButton: Bool)
     case device(DeviceInfo)

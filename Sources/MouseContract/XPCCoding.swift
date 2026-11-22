@@ -24,6 +24,12 @@ extension ClientMessage {
             d.type("play")
             d.uint("pattern", UInt64(pattern))
             if let strength { d.uint("strength", UInt64(strength)) }
+        case let .d100hDetentsMuted(muted):
+            d.type("d100hDetentsMuted")
+            d.bool("muted", muted)
+        case let .d100hInputRequested(requested):
+            d.type("d100hInputRequested")
+            d.bool("requested", requested)
         }
         return d.object
     }
@@ -45,6 +51,12 @@ extension ClientMessage {
         case "play":
             guard let pattern = d.uint("pattern").flatMap(UInt8.init(exactly:)) else { return nil }
             self = .play(pattern: pattern, strength: d.uint("strength").flatMap(UInt8.init(exactly:)))
+        case "d100hDetentsMuted":
+            guard let muted = d.bool("muted") else { return nil }
+            self = .d100hDetentsMuted(muted)
+        case "d100hInputRequested":
+            guard let requested = d.bool("requested") else { return nil }
+            self = .d100hInputRequested(requested)
         default:
             return nil
         }
@@ -120,6 +132,21 @@ extension ServiceMessage {
             d.type("swipe")
             d.string("phase", phase.rawValue)
             d.double("time", time)
+        case let .d100hInput(input, time):
+            d.type("d100hInput")
+            d.double("time", time)
+            switch input {
+            case let .button(button, pressed):
+                d.string("kind", "button")
+                d.string("button", button.rawValue)
+                d.bool("pressed", pressed)
+            case let .turn(direction, knobPressed):
+                d.string("kind", "turn")
+                d.string("direction", direction.rawValue)
+                d.bool("knobPressed", knobPressed)
+            case .cancelled:
+                d.string("kind", "cancelled")
+            }
         case let .wheel(highResolution, mode, byButton):
             d.type("wheel")
             d.bool("highResolution", highResolution)
@@ -163,6 +190,22 @@ extension ServiceMessage {
             guard let phase = d.string("phase").flatMap(SwipePhase.init(rawValue:)),
                   let time = d.double("time") else { return nil }
             self = .swipe(phase: phase, time: time)
+        case "d100hInput":
+            guard let time = d.double("time"), time.isFinite else { return nil }
+            switch d.string("kind") {
+            case "button":
+                guard let button = d.string("button").flatMap(D100HButton.init(rawValue:)),
+                      let pressed = d.bool("pressed") else { return nil }
+                self = .d100hInput(.button(button, pressed: pressed), time: time)
+            case "turn":
+                guard let direction = d.string("direction").flatMap(D100HDirection.init(rawValue:)),
+                      let knobPressed = d.bool("knobPressed") else { return nil }
+                self = .d100hInput(.turn(direction, knobPressed: knobPressed), time: time)
+            case "cancelled":
+                self = .d100hInput(.cancelled, time: time)
+            default:
+                return nil
+            }
         case "wheel":
             guard let highResolution = d.bool("highResolution"), let byButton = d.bool("byButton") else { return nil }
             let mode = d.uint("mode").flatMap { UInt8(exactly: $0) }.flatMap(WheelMode.init(rawValue:))
@@ -202,6 +245,82 @@ extension ServiceMessage {
         return DeviceInfo(present: present, controls: controls,
                           thumbWheelStepsPerRevolution: d.int("thumbWheelStepsPerRevolution").map(Int.init),
                           haptics: haptics)
+    }
+}
+
+/// Private transport between the dial reader and MouseService.
+public enum D100HHelperMessage: Equatable, Sendable {
+    public static let daemonName = "local.mouseservice.d100h"
+    case connect
+    case hello
+    case managedHello
+    case recover
+    case suspend
+    case capture(UInt64?)
+    case release(restored: Bool)
+    case captured(session: UInt64, open: Bool)
+    case input(session: UInt64, event: D100HInput, time: Double)
+
+    public func xpc() -> xpc_object_t {
+        let d = Writer()
+        switch self {
+        case .connect:
+            d.type("d100hHelperConnect")
+        case .hello:
+            d.type("d100hHelperHello")
+        case .managedHello:
+            d.type("d100hHelperManagedHello")
+        case .recover:
+            d.type("d100hHelperRecover")
+        case .suspend:
+            d.type("d100hHelperSuspend")
+        case let .capture(session):
+            d.type("d100hHelperCapture")
+            d.uint("session", session ?? 0)
+        case let .release(restored):
+            d.type("d100hHelperRelease")
+            d.bool("restored", restored)
+        case let .captured(session, open):
+            d.type("d100hHelperCaptured")
+            d.uint("session", session)
+            d.bool("open", open)
+        case let .input(session, event, time):
+            d.type("d100hHelperInput")
+            d.uint("session", session)
+            d.set("event", ServiceMessage.d100hInput(event, time: time).xpc())
+        }
+        return d.object
+    }
+
+    public init?(xpc object: xpc_object_t) {
+        guard let d = Reader(object) else { return nil }
+        switch d.string("type") {
+        case "d100hHelperConnect":
+            self = .connect
+        case "d100hHelperHello":
+            self = .hello
+        case "d100hHelperManagedHello":
+            self = .managedHello
+        case "d100hHelperRecover":
+            self = .recover
+        case "d100hHelperSuspend":
+            self = .suspend
+        case "d100hHelperCapture":
+            guard let session = d.uint("session") else { return nil }
+            self = .capture(session == 0 ? nil : session)
+        case "d100hHelperRelease":
+            guard let restored = d.bool("restored") else { return nil }
+            self = .release(restored: restored)
+        case "d100hHelperCaptured":
+            guard let session = d.uint("session"), session != 0, let open = d.bool("open") else { return nil }
+            self = .captured(session: session, open: open)
+        case "d100hHelperInput":
+            guard let session = d.uint("session"), session != 0, let object = d.dictionary("event"),
+                  case let .d100hInput(event, time) = ServiceMessage(xpc: object) else { return nil }
+            self = .input(session: session, event: event, time: time)
+        default:
+            return nil
+        }
     }
 }
 
