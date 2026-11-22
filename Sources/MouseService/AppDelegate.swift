@@ -30,7 +30,7 @@ import SettingsKit
     private var scrollTap: ScrollTap?
     private var driver: LogiMouseDriver?
     private var service: Service?
-    private let d100hSettings = D100HSettings()
+    private let d100h = D100HDevice(firmware: D100HSettings())
     private var d100hDaemonStatus: SMAppService.Status?
     private var d100hStatusTask: Task<Void, Never>?
     private static let screenUnlocked = Notification.Name("com.apple.screenIsUnlocked")
@@ -103,9 +103,8 @@ import SettingsKit
     }
 
     func applicationShouldTerminate(_ sender: NSApplication) -> NSApplication.TerminateReply {
-        guard let service else { return .terminateNow }
-        service.stopD100HInput()
-        d100hSettings.stop {
+        guard service != nil else { return .terminateNow }
+        d100h.stop {
             DispatchQueue.main.async { NSApp.reply(toApplicationShouldTerminate: true) }
         }
         return .terminateLater
@@ -168,7 +167,7 @@ import SettingsKit
             service?.frontmost(pid: NSWorkspace.shared.frontmostApplication?.processIdentifier)
             refreshD100HDaemon()
         }
-        service?.setD100HSessionActive(active)
+        d100h.setSessionActive(active)
     }
 
     // MARK: Service
@@ -177,14 +176,8 @@ import SettingsKit
         let driver = LogiMouseDriver(hapticStrength: settings.hapticStrength, panelForce: settings.panelForce)
         driver.onBatteryChange = { [weak self] in self?.updateMouseStatus() }
         let version = Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? "?"
-        let service = Service(driver: driver, version: version, globalMode: settings.wheelMode)
-        service.onD100HDetentsMutedChange = { [d100hSettings] muted in d100hSettings.setMuted(muted) }
-        service.configureD100HTurns = { [d100hSettings] enabled, completion in
-            d100hSettings.setTurnMapping(enabled) { success in
-                DispatchQueue.main.async { completion(success) }
-            }
-        }
-        d100hSettings.recover()
+        let service = Service(driver: driver, version: version, globalMode: settings.wheelMode, d100h: d100h)
+        d100h.start()
         // A SmartShift press where no app asks for a mode is the user's choice: kept as the setting.
         service.onGlobalModeChange = { [weak self] mode in
             try? self?.settings.setValue(mode == .freeSpin ? "free-spin" : "ratchet", forKey: ServiceSettings.wheelModeKey)
@@ -404,7 +397,7 @@ import SettingsKit
             guard let self, !Task.isCancelled else { return }
             d100hStatusTask = nil
             d100hDaemonStatus = status
-            service?.allowD100HDaemon(status == .enabled)
+            d100h.allowDaemon(status == .enabled)
         }
     }
 
@@ -415,7 +408,7 @@ import SettingsKit
             guard let self else { return }
             d100hStatusTask = nil
             d100hDaemonStatus = status
-            service?.allowD100HDaemon(status == .enabled)
+            d100h.allowDaemon(status == .enabled)
             if status == .requiresApproval {
                 SMAppService.openSystemSettingsLoginItems()
             } else if let error {

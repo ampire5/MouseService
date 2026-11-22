@@ -1,3 +1,5 @@
+import MouseContract
+
 /// A capture lasts until the firmware has returned to its original assignments.
 /// Capture sessions and configuration revisions discard replies from a previous owner.
 struct D100HCapture {
@@ -13,7 +15,8 @@ struct D100HCapture {
     private var captured: UInt64?
     private var failed: UInt64?
     private var wantsMapping = false
-    private var ready = false
+    private var readySince: Double?
+    private var pressed: Set<D100HButton> = []
     private var restoring = false
     private var restored = true
     private var revision = 0
@@ -37,10 +40,10 @@ struct D100HCapture {
         return reconcile()
     }
 
-    mutating func configurationFinished(revision: Int, success: Bool) -> [Action] {
+    mutating func configurationFinished(revision: Int, success: Bool, time: Double) -> [Action] {
         guard revision == self.revision else { return [] }
         if wantsMapping {
-            ready = success
+            readySince = success ? time : nil
             if !success { failed = wanted }
         } else {
             restoring = false
@@ -51,7 +54,19 @@ struct D100HCapture {
     }
 
     func accepts(_ session: UInt64) -> Bool {
-        ready && wanted == session && captured == session
+        readySince != nil && wanted == session && captured == session
+    }
+
+    mutating func acceptsInput(_ input: D100HInput, session: UInt64, time: Double) -> Bool {
+        // The helper stamps reports on the same host before sending them over XPC.
+        guard accepts(session), let readySince, time >= readySince else { return false }
+        switch input {
+        case let .button(button, true): return pressed.insert(button).inserted
+        case let .button(button, false): return pressed.remove(button) != nil
+        case .cancelled: pressed.removeAll()
+        case .turn: break
+        }
+        return true
     }
 
     private mutating func reconcile() -> [Action] {
@@ -60,7 +75,8 @@ struct D100HCapture {
         let configure = !restoring && demand != nil && demand == captured
         if configure != wantsMapping {
             wantsMapping = configure
-            ready = false
+            readySince = nil
+            pressed.removeAll()
             restoring = !configure
             if configure { restored = false }
             revision += 1

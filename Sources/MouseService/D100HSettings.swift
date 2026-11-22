@@ -1,5 +1,6 @@
 import CoreBluetooth
 import Foundation
+import MouseServiceKit
 import os
 
 /// One on-demand settings connection to a bonded D100H. Bluetooth callbacks and recovery I/O run on `queue`.
@@ -63,12 +64,16 @@ final class D100HSettings: NSObject, @unchecked Sendable {
         }
     }
 
-    func setTurnMapping(_ enabled: Bool, completion: @escaping @Sendable (Bool) -> Void) {
+    func setTurnMapping(_ enabled: Bool, completion: @escaping @MainActor @Sendable (Bool) -> Void) {
+        let finish: @Sendable (Bool) -> Void = { success in
+            DispatchQueue.main.async { completion(success) }
+        }
         queue.async { [self] in
-            guard !shuttingDown else { completion(false); return }
+            guard !shuttingDown else { finish(false); return }
             turnsDeadline?.cancel()
+            turnsResult?(false)
             turnsWanted = enabled
-            turnsResult = completion
+            turnsResult = finish
             retries = 0
             for slot in D100HTurnMapping.Slot.allCases { values[.assignment(slot)] = nil }
             let deadline = DispatchWorkItem { [weak self] in
@@ -291,6 +296,10 @@ final class D100HSettings: NSObject, @unchecked Sendable {
         disconnect()
         completion()
     }
+}
+
+extension D100HSettings: D100HFirmware {
+    var supportsTurnMapping: Bool { true }
 }
 
 extension D100HSettings: CBCentralManagerDelegate, CBPeripheralDelegate {
