@@ -26,6 +26,9 @@ import XPC
     private var requests: [ClientID: Request] = [:]
     private var recipient: ClientID?
     private var detentsMuted = false
+    private var detentsOverride: Bool?
+    private var lowerButtons: Set<D100HButton> = []
+    private var consumingLowerButtons = false
     private var sessionActive = true
     private var stopping = false
     private var session: UInt64 = 0
@@ -146,6 +149,7 @@ import XPC
         case let .input(session, event, time):
             guard isReader(connection), session == self.session,
                   !managesCapture || capture.acceptsInput(event, session: session, time: time) else { return }
+            if managesCapture, handleLowerButtonChord(event, time: time) { return }
             deliver(event, time: time)
         case .capture, .connect, .release:
             break
@@ -158,13 +162,40 @@ import XPC
         guard next != recipient else { return }
         cancelInput()
         recipient = next
+        detentsOverride = nil
         session += 1
         daemonAttempts = 0
         if !needsDaemon { cancelRetry() }
         updateReader()
     }
 
-    private func cancelInput() { deliver(.cancelled, time: ProcessInfo.processInfo.systemUptime) }
+    private func cancelInput(time: Double = ProcessInfo.processInfo.systemUptime) {
+        lowerButtons.removeAll()
+        consumingLowerButtons = false
+        deliver(.cancelled, time: time)
+    }
+
+    private func handleLowerButtonChord(_ event: D100HInput, time: Double) -> Bool {
+        if event == .cancelled {
+            cancelInput(time: time)
+            return true
+        }
+        guard case let .button(button, pressed) = event,
+              button == .bottomLeft || button == .bottomRight else { return false }
+        if pressed { lowerButtons.insert(button) }
+        else { lowerButtons.remove(button) }
+        if consumingLowerButtons {
+            if lowerButtons.isEmpty { consumingLowerButtons = false }
+            return true
+        }
+        guard lowerButtons.count == 2 else { return false }
+        consumingLowerButtons = true
+        // The player may already be tracking the first press. Cancel it without a release action.
+        deliver(.cancelled, time: time)
+        detentsOverride = !detentsMuted
+        updateDetents()
+        return true
+    }
 
     private func updateReader() {
         let wanted = recipient == nil ? nil : session
@@ -277,9 +308,10 @@ import XPC
     private func updateDetents() {
         // On wake the player may regain focus before the reader captures the device and configures the profile.
         let ready = !managesCapture || capture.accepts(session)
-        let muted = !stopping && sessionActive && requests.values.contains {
+        let requested = requests.values.contains {
             $0.muteDetents && (ready || $0.input == nil)
         }
+        let muted = !stopping && sessionActive && (ready ? detentsOverride ?? requested : requested)
         guard muted != detentsMuted else { return }
         detentsMuted = muted
         firmware.setMuted(muted)

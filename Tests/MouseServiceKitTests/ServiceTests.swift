@@ -198,6 +198,48 @@ private let gesture: UInt16 = 0xC3
     }
 
     @Test(arguments: [false, true])
+    func dialLowerButtonsToggleDetentsWithoutFinishingAPlayerGesture(startsMuted: Bool) {
+        let rig = Rig(managedDial: true)
+        defer { rig.shutDown() }
+        let link = xpc_connection_create_from_endpoint(rig.listener.endpoint)
+        xpc_connection_set_event_handler(link) { _ in }
+        xpc_connection_resume(link)
+        defer { xpc_connection_cancel(link) }
+        rig.d100h.receive(.managedHello, from: link, isPrivilegedHelper: true)
+        let owner = ClientID(raw: 1)
+        rig.d100h.updateForegroundRequests([owner: .init(input: true, muteDetents: startsMuted)])
+        rig.d100h.receive(.captured(session: 1, open: true), from: link, isPrivilegedHelper: true)
+
+        var input: [D100HInput] = []
+        rig.d100h.onInput = { _, event, _ in input.append(event) }
+        func send(_ button: D100HButton, pressed: Bool) {
+            let time = ProcessInfo.processInfo.systemUptime
+            let event = D100HInput.button(button, pressed: pressed)
+            rig.d100h.receive(.input(session: 1, event: event, time: time), from: link, isPrivilegedHelper: true)
+        }
+        let initialChanges: [Bool] = startsMuted ? [true] : []
+        send(.bottomRight, pressed: true)
+        send(.bottomLeft, pressed: true)
+        send(.bottomLeft, pressed: false)
+        send(.bottomLeft, pressed: true)
+        send(.bottomRight, pressed: false)
+        send(.bottomLeft, pressed: false)
+        #expect(rig.firmware.muteChanges == initialChanges + [!startsMuted])
+        #expect(input == [.button(.bottomRight, pressed: true), .cancelled])
+
+        send(.bottomLeft, pressed: true)
+        send(.bottomRight, pressed: true)
+        send(.bottomLeft, pressed: false)
+        send(.bottomRight, pressed: false)
+        #expect(rig.firmware.muteChanges == initialChanges + [!startsMuted, startsMuted])
+        #expect(input.suffix(2) == [.button(.bottomLeft, pressed: true), .cancelled])
+
+        send(.bottomRight, pressed: true)
+        send(.bottomRight, pressed: false)
+        #expect(input.suffix(2) == [.button(.bottomRight, pressed: true), .button(.bottomRight, pressed: false)])
+    }
+
+    @Test(arguments: [false, true])
     func dialRecoveryWithoutDaemonAcknowledgmentRetriesAfterFocusLoss(restored: Bool) async throws {
         let rig = Rig(managedDial: true)
         defer { rig.shutDown() }

@@ -49,6 +49,29 @@ import MouseContract
     #expect(capture.readerReported(session: 4, open: true).isEmpty)
 }
 
+@Test(arguments: [false, true])
+func dialResumesTheSameSessionAfterPowerCycle(reconnectBeforeRestoreTimeout: Bool) {
+    var capture = D100HCapture()
+    #expect(capture.update(wanted: 4, readerAvailable: true) == [.capture(4)])
+    #expect(capture.readerReported(session: 4, open: true) == [.configure(true, revision: 1)])
+    #expect(capture.configurationFinished(revision: 1, success: true, time: 1).isEmpty)
+
+    #expect(capture.readerReported(session: 4, open: false) == [.configure(false, revision: 2)])
+    #expect(!capture.accepts(4))
+    let remap: [D100HCapture.Action] = [.configure(true, revision: 3)]
+    if reconnectBeforeRestoreTimeout {
+        #expect(capture.readerReported(session: 4, open: true).isEmpty)
+        #expect(capture.configurationFinished(revision: 2, success: false, time: 8) == remap)
+    } else {
+        #expect(capture.configurationFinished(revision: 2, success: false, time: 8).isEmpty)
+        #expect(capture.hasCaptureCommand)
+        #expect(capture.readerReported(session: 4, open: true) == remap)
+    }
+    #expect(!capture.accepts(4))
+    #expect(capture.configurationFinished(revision: 3, success: true, time: 10).isEmpty)
+    #expect(capture.accepts(4))
+}
+
 @Test func dialDropsQueuedInputAndUnpairedReleasesAtActivation() {
     var capture = D100HCapture()
     _ = capture.update(wanted: 4, readerAvailable: true)

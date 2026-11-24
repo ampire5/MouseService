@@ -48,7 +48,9 @@ struct D100HCapture {
         } else {
             restoring = false
             restored = success
-            if !success { failed = wanted }
+            // Keep the command armed when the dial powers off under the same owner.
+            // The next HID open can reverify the assignments using the recovery journal.
+            if !success, wanted != commanded { failed = wanted }
         }
         return reconcile()
     }

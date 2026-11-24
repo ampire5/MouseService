@@ -15,12 +15,15 @@ when it loses eligibility. See [MouseService setup](../README.md#ulanzi-d100h) f
 | Turn the dial | Send vertical scroll to the player. Press and turn to use accelerated scrubbing. |
 | Lower left + turn | Seek in five-second steps using keyframes. |
 | Lower right + turn | Change volume. Hold for at least 0.5 s and release without turning to toggle mute. |
+| Both lower side buttons together | Toggle the dial's physical detents while the player is in front. Release both buttons before toggling again. |
 
 Clockwise moves forward in time or increases speed or volume. A turn with a held modifier consumes
 its release action. `d100h-edge-offset` defaults to 10 percent, so the two long presses target 10 and
 90 percent. `d100h-mute-detents=yes` temporarily disables physical detents while the verified viewing
 profile is active. Hardware checks confirmed detents off at `0x00` and on at `0xFF`. A value of
 `0x01` read back successfully without perceptible feedback. Intermediate strength settings remain unverified.
+The button combination switches between muted detents and the dial's original setting. Its override survives
+a dial power cycle while the player remains in front. Leaving the player resets the override.
 
 ## Data flow and recovery
 
